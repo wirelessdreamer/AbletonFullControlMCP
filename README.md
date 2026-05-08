@@ -8,35 +8,41 @@ A Model Context Protocol (MCP) server that lets an LLM client (Claude Desktop, C
 
 ## Comparison vs the projects we built on
 
-| Capability | **AbletonFullControlMCP** | [ableton-mcp][a] | [live-mcp-server][b] | [AbletonOSC][c] | [pylive][d] |
-|---|---|---|---|---|---|
-| Project type | MCP server (this repo) | MCP server | MCP server | Live Remote Script (OSC) | Python wrapper around AbletonOSC |
-| Tool count exposed to LLM | **200+** | ~16 | ~20 | n/a | n/a |
-| Transport | **OSC + companion JSON/TCP bridge** | Custom TCP + custom Remote Script | OSC via AbletonOSC | OSC | OSC |
-| Live Object Model coverage | **full LOM + browser + group/freeze/flatten + save + session→arrangement** | partial (tracks, clips, basic devices) | most of LOM (rides AbletonOSC) | full LOM | full LOM |
-| Browser / preset loading | **yes** (companion bridge) | yes (custom RS) | no | no | no |
-| Group / freeze / flatten | **yes** | no | no | no | no |
-| Session → Arrangement copy | **yes** (`clip.duplicate_to_arrangement`) | no | no | no | no |
-| Listeners / event subscriptions | **yes — poll-based, 9 subscription tools** | no | partial | yes (raw) | partial |
-| MIDI file I/O on disk | **6 tools (load/export/quantize/transpose/humanize/summary)** | no | no | n/a | partial |
-| Audio analysis (librosa) | **MFCC, key, tempo, spectral features, similarity** | no | no | n/a | n/a |
-| Sound modeling (probe → match → describe) | **yes** (offline pipeline + LiveRenderer once tape is live) | no | no | n/a | n/a |
-| Semantic vocabulary (109 descriptors → feature deltas) | **yes** | no | no | n/a | n/a |
-| NL sound shaping ("brighter and punchier") | **yes** (`shape_predict` / `shape_apply`) | no | no | n/a | n/a |
-| Per-device sound rules ("aggressive on Drift") | **yes** (`sound_design/`, curated per-device rules) | no | no | n/a | n/a |
-| Song structure in bar counts | **yes** (`structure_*` tools) | no | no | n/a | n/a |
-| Inventory of installed instruments → manifest | **yes** (`inventory_scan_all`) | no | no | n/a | n/a |
-| Stock device schemas (57 devices) | **yes** | no | no | n/a | n/a |
-| Audio capture (M4L tape device) | **yes** + sounddevice loopback fallback | no | no | no | no |
-| Bounce to wav (full mix) | **yes** | no | no | no | no |
-| Bounce to wav (per-track stems) | **yes** | no | no | no | no |
-| Bounce to mp3 (libmp3lame via ffmpeg) | **yes** | no | no | no | no |
-| Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers or TF-IDF fallback) | no | no | n/a | n/a |
-| AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no | n/a | n/a |
-| Stem splitting (Demucs) | **yes** (optional `[stems]` extra) | no | no | n/a | n/a |
-| Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no | yes (`/live/api/reload`) | n/a |
-| Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a | FIFO per address | FIFO per address |
-| Auto-installer for clients (Claude Desktop + Code, idempotent merge) | **yes** (`install_clients` script) | no | no | n/a | n/a |
+This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server][b]. It also sits **on top of** — not against — the lower-level [AbletonOSC][c] Remote Script and its [pylive][d] Python wrapper.
+
+### vs other Ableton MCP servers
+
+| Capability | **AbletonFullControlMCP** | [ableton-mcp][a] | [live-mcp-server][b] |
+|---|---|---|---|
+| Project type | MCP server (this repo) | MCP server | MCP server |
+| Tool count exposed to LLM | **200+** | ~16 | ~20 |
+| Transport | **OSC + JSON/TCP bridge** | Custom TCP + Remote Script | OSC via AbletonOSC |
+| LOM coverage | **full LOM + browser + groups/freeze/flatten + save + S→A** | partial (tracks, clips, basic devices) | most of LOM (via AbletonOSC) |
+| Browser / preset loading | **yes** (companion bridge) | yes (custom RS) | no |
+| Group / freeze / flatten | **yes** | no | no |
+| Session → Arrangement copy | **yes** (`clip.duplicate_to_arrangement`) | no | no |
+| Listeners / event subscriptions | **9 poll-based subscription tools** | no | partial |
+| MIDI file I/O on disk | **6 tools** (load/export/quantize/transpose/humanize/summary) | no | no |
+| Audio analysis (librosa) | **MFCC, key, tempo, spectral, similarity** | no | no |
+| Sound modeling (probe → match → describe) | **yes** (offline pipeline + LiveRenderer) | no | no |
+| Semantic vocabulary (109 descriptors → feature deltas) | **yes** | no | no |
+| NL sound shaping ("brighter and punchier") | **yes** (`shape_predict` / `shape_apply`) | no | no |
+| Per-device sound rules ("aggressive on Drift") | **yes** (curated per-device) | no | no |
+| Song structure in bar counts | **yes** (`structure_*` tools) | no | no |
+| Inventory of installed instruments | **yes** (`inventory_scan_all`) | no | no |
+| Stock device schemas | **57 devices** | no | no |
+| Audio capture (M4L tape + loopback fallback) | **yes** | no | no |
+| Bounce to wav / stems / mp3 | **yes** (full mix + per-track stems, libmp3lame) | no | no |
+| Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers / TF-IDF fallback) | no | no |
+| AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no |
+| Stem splitting (Demucs) | **yes** (optional `[stems]` extra) | no | no |
+| Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no |
+| Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a |
+| Auto-installer for clients (Claude Desktop + Code) | **yes** (`install_clients` script) | no | no |
+
+### vs the lower-level layer we build on
+
+[AbletonOSC][c] is a Live Remote Script that exposes the LOM over OSC. [pylive][d] is a Python wrapper around AbletonOSC. Neither exposes tools to an LLM — they're transports. We use AbletonOSC as the backbone for ~70% of our tools (full LOM, raw event listeners with FIFO reply correlation, `/live/api/reload` hot-reload) and add the MCP layer, the companion bridge for things AbletonOSC doesn't expose (browser, groups, freeze, save, S→A), the schema / semantic / sound-design libraries, the structure model, the bounce pipeline, and the knowledge RAG on top.
 
 [a]: https://github.com/ahujasid/ableton-mcp
 [b]: https://github.com/Simon-Kansara/ableton-live-mcp-server
