@@ -210,17 +210,19 @@ def test_refine_decreases_distance(tmp_path: Path) -> None:
 
 
 def test_live_renderer_constructs_cheaply() -> None:
-    """LiveRenderer.render() now drives the Phase 2 capture pipeline; see
-    ``tests/test_live_renderer.py`` for the end-to-end coverage. Construction
-    itself must remain dependency-free so the offline pipeline keeps working
-    even when AbletonOSC + the M4L tape device aren't reachable.
+    """LiveRenderer is currently a stub: ``render()`` raises NotImplementedError.
+    Construction must stay dependency-free so the offline pipeline (synth_stub
+    matcher / sweep planner / probe dataset) keeps working without AbletonOSC.
     """
     r = LiveRenderer(track_index=0, device_index=1)
     assert r.track_index == 0
     assert r.device_index == 1
-    # Calling render() without any servers up would fail with an OSC timeout
-    # (or a tape timeout). We don't exercise that path here because it has its
-    # own test file that wires fakes; we just want to confirm ctor is safe.
+    # render() should raise the structured stub error (sound_modeling tools
+    # catch this and surface a "not_implemented" result to callers).
+    import pytest
+
+    with pytest.raises(NotImplementedError):
+        r.render({"cutoff": 0.5})
 
 
 # ---------- existing server regression: tools still register -----------------

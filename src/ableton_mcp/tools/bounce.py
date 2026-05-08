@@ -1,33 +1,27 @@
 """MCP tools for bouncing the current set to wav/mp3 (full mix + stems).
 
-These wrap `ableton_mcp.bounce.*`. Two classes of tool:
+These wrap ``ableton_mcp.bounce.*``. All realtime capture goes through Live's
+built-in Resampling input — no Max for Live, no loopback driver.
 
-Offline (work today, no extra setup):
+Realtime (one playback pass, ``duration_sec`` of wall-clock):
+    bounce_song(output_path, duration_sec)         master mix → wav (+ optional mp3)
+    bounce_tracks(track_indices, output_dir, ...)  per-track stems in parallel
+    bounce_enabled(output_dir, duration_sec, ...)  every un-muted track + master
+
+Offline (work on any wavs already on disk):
     bounce_encode_mp3(wav_path, mp3_path, bitrate_kbps)
     bounce_mix_stems(stem_paths, output_path)
-
-Realtime (require AbletonFullControlTape on Master, or a configured loopback driver):
-    bounce_full_mix(output_path, duration_sec)
-    bounce_stems(output_dir, duration_sec, track_indices)
-    bounce_full_pipeline(output_dir, duration_sec, track_indices, formats)
-
-If the tape device isn't reachable, every realtime tool returns a structured
-error explaining how to finish setup.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from ..bounce import (
-    BounceError,
     bounce_enabled_via_resampling,
-    bounce_master_realtime,
     bounce_song_via_resampling,
-    bounce_stems_realtime,
     bounce_tracks_via_resampling,
     encode_wav_to_mp3,
     mix_stems_to_master,
@@ -170,7 +164,7 @@ def register(mcp: FastMCP) -> None:
         return r
 
     # ============================================================
-    # Pre-existing tools below (offline post-processing + tape device).
+    # Offline post-processing — operate on wav files already on disk.
     # ============================================================
 
     @mcp.tool()
@@ -204,8 +198,8 @@ def register(mcp: FastMCP) -> None:
 
         All stems must share a sample rate. Normalisation peak-limits to
         -headroom_db dBFS. Use this when you have stems on disk (from any
-        source — tape capture, freeze export, manual export from Live) and
-        you also want a single full-mix file.
+        source — `bounce_tracks`, freeze export, manual export from Live)
+        and you also want a single full-mix file.
         """
         try:
             return mix_stems_to_master(
@@ -215,115 +209,3 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
-    @mcp.tool()
-    async def bounce_full_mix(
-        output_path: str,
-        duration_sec: float,
-        pre_roll_sec: float = 0.5,
-        post_roll_sec: float = 0.3,
-    ) -> dict[str, Any]:
-        """Capture the Master output to a wav. Realtime; takes ~duration_sec.
-
-        Prerequisites:
-          - AbletonFullControlTape compiled as `.amxd` (Save As Device in Max once
-            after `install_tape`).
-          - The .amxd dropped on Live's **Master** track.
-          - Live in the foreground; the arrangement starts at beat 0.
-        """
-        try:
-            return await bounce_master_realtime(
-                output_path,
-                duration_sec=duration_sec,
-                pre_roll_sec=pre_roll_sec,
-                post_roll_sec=post_roll_sec,
-            )
-        except BounceError as e:
-            return {"status": "not_configured", "error": str(e)}
-        except Exception as e:
-            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
-
-    @mcp.tool()
-    async def bounce_stems(
-        output_dir: str,
-        duration_sec: float,
-        track_indices: list[int],
-        include_full_mix: bool = True,
-    ) -> dict[str, Any]:
-        """Capture per-track stems by soloing each in turn while recording Master.
-
-        Realtime: total time ≈ `duration_sec * (len(track_indices) + 1)` with
-        the optional final full-mix pass. Same prereqs as `bounce_full_mix`.
-        """
-        try:
-            return await bounce_stems_realtime(
-                output_dir,
-                duration_sec=duration_sec,
-                track_indices=track_indices,
-                include_full_mix=include_full_mix,
-            )
-        except BounceError as e:
-            return {"status": "not_configured", "error": str(e)}
-        except Exception as e:
-            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
-
-    @mcp.tool()
-    async def bounce_full_pipeline(
-        output_dir: str,
-        duration_sec: float,
-        track_indices: list[int],
-        formats: list[str] | None = None,
-        bitrate_kbps: int = 192,
-    ) -> dict[str, Any]:
-        """End-to-end: stems → wav → optional mp3, plus a full-mix wav and mp3.
-
-        `formats` defaults to ["wav", "mp3"]. Total wall-clock ~= duration *
-        (n_tracks + 1) seconds for the realtime stem capture, plus a few
-        seconds for ffmpeg encoding.
-        """
-        formats = formats or ["wav", "mp3"]
-        out_root = Path(output_dir)
-        try:
-            stems_result = await bounce_stems_realtime(
-                str(out_root),
-                duration_sec=duration_sec,
-                track_indices=track_indices,
-                include_full_mix=True,
-            )
-        except BounceError as e:
-            return {"status": "not_configured", "error": str(e)}
-        except Exception as e:
-            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
-
-        encoded: list[dict[str, Any]] = []
-        if "mp3" in formats:
-            try:
-                # Stems
-                for s in stems_result.get("stems", []):
-                    wav = s["path"]
-                    mp3 = wav[:-4] + ".mp3" if wav.lower().endswith(".wav") else wav + ".mp3"
-                    encoded.append(encode_wav_to_mp3(wav, mp3, bitrate_kbps=bitrate_kbps))
-                fm = stems_result.get("full_mix")
-                if fm:
-                    wav = fm["output_path"]
-                    mp3 = wav[:-4] + ".mp3" if wav.lower().endswith(".wav") else wav + ".mp3"
-                    encoded.append(encode_wav_to_mp3(wav, mp3, bitrate_kbps=bitrate_kbps))
-            except FFmpegMissing as e:
-                return {
-                    "status": "wav_only",
-                    "wavs": stems_result,
-                    "mp3_skipped_reason": str(e),
-                }
-            except Exception as e:
-                return {
-                    "status": "wav_only",
-                    "wavs": stems_result,
-                    "mp3_skipped_reason": f"{type(e).__name__}: {e}",
-                }
-
-        return {
-            "status": "ok",
-            "output_dir": str(out_root.resolve()),
-            "wavs": stems_result,
-            "mp3s": encoded,
-            "formats": formats,
-        }

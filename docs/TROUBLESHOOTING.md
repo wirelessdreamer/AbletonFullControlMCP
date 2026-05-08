@@ -51,14 +51,37 @@ AbletonOSC binds **UDP/11000** (recv from us) and **UDP/11001** (send to
 us). If something else owns those ports the server starts but every
 request times out.
 
+`live_ping` reports this directly with `cause: "reply_port_in_use"` —
+that is the structured equivalent of the cryptic `WinError 10048` /
+`OSError: [Errno 98] Address already in use` you would otherwise see on
+the first request.
+
 ```powershell
-# See who owns 11001
+# See who owns 11001 (Windows)
 Get-NetUDPEndpoint -LocalPort 11001 | Select-Object OwningProcess
 Get-Process -Id <pid>
 ```
 
+```bash
+# macOS / Linux
+lsof -i UDP:11001
+```
+
 Common culprits:
 
+- **Two MCP hosts running this server.** Each MCP host (Claude Code CLI,
+  Claude Code desktop app, Claude Desktop, Cursor, Continue, ...) that
+  has `ableton-mcp` configured spawns its **own** subprocess — only one
+  can bind UDP/11001. The losing process(es) fail to bind and every
+  request times out, *and* the reply traffic from Live goes to the
+  winner regardless of which client issued the request.
+
+  Quickest fix: configure the MCP only in the host you're actively using,
+  or close the other host before starting work. If you genuinely need
+  multiple hosts at the same time, give each a distinct port pair via
+  `ABLETON_OSC_RECV_PORT` / `ABLETON_OSC_SEND_PORT` and update
+  AbletonOSC's `consts.py` for whichever instance gets the non-default
+  pair.
 - A previous AbletonMCP server still alive (kill it).
 - Another OSC tool — TouchOSC bridge, Open Stage Control, etc.
 - A second Live instance.

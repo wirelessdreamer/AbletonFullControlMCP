@@ -1,13 +1,12 @@
-"""Sound modeling — Phase 3 offline pipeline.
+"""Sound modeling — offline pipeline.
 
 Three tools:
 
 - ``sound_probe_device``: sweep a device's parameter space, render each cell,
   extract features, and persist a sqlite probe dataset. Today only the
   ``synth_stub`` "device" runs end-to-end (it is rendered in-process with
-  numpy/scipy). Real Live devices need the Phase 2 render-in-the-loop path
-  through ``LiveRenderer``, which is wired up but raises ``NotImplementedError``
-  pending Phase 2.
+  numpy/scipy). Real Live devices need a render-in-the-loop capture path
+  through ``LiveRenderer``, which currently raises ``NotImplementedError``.
 
 - ``sound_match``: load a target wav with librosa, extract features, kNN
   against a saved dataset, return top-k param recommendations. If
@@ -164,7 +163,8 @@ def register(mcp: FastMCP) -> None:
         Pass ``device_id="synth_stub"`` to run the in-process numpy synth (no Live
         required) — useful for testing the rest of the pipeline. For real Live
         devices, also pass ``track_index`` and ``device_index``; rendering will
-        fail with NotImplementedError until the Phase 2 capture pipeline lands.
+        fail with NotImplementedError until a Resampling-based capture path is
+        added to ``LiveRenderer``.
         """
         try:
             renderer = _resolve_renderer(
@@ -203,7 +203,7 @@ def register(mcp: FastMCP) -> None:
                         "status": "not_implemented",
                         "phase": 3,
                         "device_id": device_id,
-                        "depends_on": ["render_clip (Phase 2)"],
+                        "depends_on": ["LiveRenderer real-device capture (resampling-based)"],
                         "message": str(exc),
                         "params": list(ranges.keys()),
                         "planned_cells": len(planner),
@@ -247,7 +247,7 @@ def register(mcp: FastMCP) -> None:
         dataset's device is a real Live device with ``track_index``/``device_index``
         provided. Set ``refine_top=True`` to run scipy.optimize starting from the
         kNN best for an extra polish (synth_stub only — real-device refinement
-        needs Phase 2 capture).
+        needs LiveRenderer's capture pipeline, which is currently a stub).
         """
         import librosa  # local to keep the rest of the module lightweight
 

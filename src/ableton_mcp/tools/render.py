@@ -1,13 +1,9 @@
-"""Audio rendering / bouncing.
+"""Audio rendering / bouncing — legacy stubs.
 
-Live exposes Export Audio/Video only via the GUI. To render programmatically we have three options:
-  (a) drive the export dialog via UI automation (fragile),
-  (b) loop the section, set a track's output to a virtual device (BlackHole on macOS, VB-Audio Cable on Windows),
-      capture from the OS, write wav,
-  (c) ship a Max for Live "tape" device that captures the master bus to disk on demand (Phase 5).
-
-For now this module exposes stubs and a working "loop a section for N seconds and capture from a chosen
-input device" helper using sounddevice (added in Phase 2).
+Active bouncing tools live in ``tools/bounce.py`` and use Live's built-in
+Resampling input (no Max for Live, no loopback driver). The two stubs in
+this module predate that path and remain ``not_implemented`` — kept only
+because removing them would silently change the registered tool surface.
 """
 
 from __future__ import annotations
