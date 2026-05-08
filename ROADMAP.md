@@ -4,7 +4,7 @@ Six phases. Each ships a usable surface; later phases stack on earlier ones.
 
 > Project name: AbletonFullControlMCP. Python module: `ableton_mcp` (kept short — same pattern as scikit-learn → sklearn).
 
-**Status as of 2026-05-07:** 196 tools across 25 categories. Phases 1, 3, 4, 6 real. **Sound-understanding stack** — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process bench, 44-preset library with cluster discovery — all ship and validate end-to-end. **Inventory tooling** — bulk browser scan + per-instrument schema introspection + manifest. **Phase 5 audio capture** — Max for Live tape device + Python `sounddevice` loopback fallback both ship; `LiveRenderer.render()` is implemented; the full sound-modeling loop now closes against real Live instruments.
+**Status as of 2026-05-08:** ~190 tools across 25 categories. Phases 1, 3, 4, 6 real. **Sound-understanding stack** — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process bench, 44-preset library with cluster discovery — all ship and validate end-to-end. **Inventory tooling** — bulk browser scan + per-instrument schema introspection + manifest. **Bounce pipeline** — `bounce_song`, `bounce_tracks`, `bounce_enabled` capture wav (+ optional mp3) using Live's built-in Resampling input; one playback pass captures every requested track in parallel. The earlier Max-for-Live "tape" capture device was removed in favour of this path.
 
 ---
 
@@ -44,7 +44,7 @@ Browser + project ops shipped via the new **AbletonFullControlBridge** Remote Sc
 - [x] **Browser:** tree navigation (`browser_get_tree`, `browser_list_at_path`)
 - [x] **High-level ops:** group/ungroup, freeze/flatten, consolidate/crop tracks/clips, save_set
 - [ ] **Browser:** save current device chain as preset (LOM does not expose preset save — needs M4L hotswap trick)
-- [ ] **Render:** bounce master, single track, single clip, or arrangement region to wav (needs M4L tape device or OS-level loopback)
+- [x] **Render:** bounce master + per-track stems via Live's Resampling input (`bounce_song`, `bounce_tracks`, `bounce_enabled`). One playback pass; no Max for Live or loopback driver required.
 - [ ] **Project Q&A:** "what's on track 3?", "what plugin is making this sound?" — composable from existing `track_list` + `device_list` but not packaged as a single tool yet
 - [ ] **Arrangement:** insert at time, move clips, set scene length, follow actions (Live's Python LOM coverage here is sparse)
 
@@ -58,13 +58,13 @@ Math + planner + matcher + dataset + synth-stub all shipped and tested end-to-en
 - [x] **Match:** `sound_match` loads reference wav → 32-dim feature vector (13 MFCC mean + 13 std + 6 spectral) → kNN cosine
 - [x] **Refine:** scipy.optimize.minimize (Powell, bounded) refines top-k candidates with a render-in-the-loop callback
 - [x] **Param explanation:** `sound_explain_parameter` sweeps one axis, ranks feature-dim deltas, reports which knob does what
-- [x] **Renderer interface:** abstract `Renderer` with `SynthStubRenderer` (works today) and `LiveRenderer` (raises `NotImplementedError("Phase 2 render pipeline required")`) — clean integration point
+- [x] **Renderer interface:** abstract `Renderer` with `SynthStubRenderer` (works today) and `LiveRenderer` (currently a stub raising `NotImplementedError`; needs a Resampling-track-based capture path to close the loop against real Live devices)
 - [x] **Device schema library:** canonical Parameter + DeviceSchema for **57 Ableton stock devices** (12 instruments, 1 drum rack, 31 audio effects, 7 MIDI effects, 3 racks, 3 utilities). Each schema marks 5-15 params as `recommended_for_sweep`.
 - [x] **Semantic vocabulary:** 109 sound descriptors across 10 categories (brightness, warmth, dynamics, space, character, envelope, harmonic, punch, air, body), each with feature-anchor predicates + opposites + aliases. `sound_describe(audio)` returns ranked descriptors.
 - [x] **NL shaping engine:** parse "brighter and punchier" → structured intent → target features → kNN over probe dataset → push params via OSC. Tools: `shape_parse`, `shape_predict`, `shape_apply`, `shape_compare_apply`.
 - [x] **Synth test bench:** 6 in-process synths (subtractive, fm_2op, fm_4op, wavetable, additive, granular) + composable FX chain (filter/delay/Schroeder reverb/saturator) — runs the entire pipeline without Live.
 - [x] **Preset library:** 44 hand-curated presets (warm pad, plucky lead, fat bass, etc.) in sqlite + KMeans cluster discovery from probe datasets that auto-names + auto-tags discovered presets.
-- [ ] **End-to-end against real Live devices:** unblocked the moment `LiveRenderer` is implemented (Phase 2 / Phase 5).
+- [ ] **End-to-end against real Live devices:** needs a `LiveRenderer` capture path. The bounce pipeline already captures Live audio via Resampling — the per-render hook for `sound_probe_device` cells is the missing piece.
 
 ## Phase 4 — Knowledge / RAG (DONE)
 
@@ -79,17 +79,15 @@ Goal: ask Ableton questions in plain English.
 - [x] CLI: `python -m ableton_mcp.scripts.build_knowledge_index --source {manual,cookbook,both}`
 - [ ] Keyboard-shortcut and routing diagrams indexed with images for visual answers (deferred)
 
-## Phase 5 — Max for Live companion (AUDIO CAPTURE DONE)
+## Phase 5 — Max for Live companion (DEFERRED)
 
-Goal: things even AbletonFullControlBridge can't do — capture audio in-process, listen to MIDI input, sample-accurate timing.
+Goal: things even AbletonFullControlBridge can't do — sample-accurate timing, listen to MIDI input, LFO/macro proxies for params LOM doesn't expose.
 
-- [x] **M4L audio capture device** (`live_max_for_live/AbletonFullControlTape/`) — records the host track's output to a wav on OSC trigger; replies on completion. Plus `sounddevice` loopback fallback for users without Max.
-- [x] **`LiveRenderer.render()` implemented** — pushes params via OSC, triggers tape capture, returns numpy array. Closes the Phase 3 loop against real Live instruments.
-- [x] **`tape_*` tool surface** — ping, record, list loopback devices, get/set config (5 tools).
+The original Phase 5 audio-capture device (`AbletonFullControlTape`) was removed in favour of the Resampling-input bounce path (Phase 2 / `bounce_song` etc.), which covers the same audio-out-to-disk use case without requiring users to install Max for Live and Save-As-Device an `.amxd`. Future Phase 5 work would only be for things Resampling can't do.
+
 - [ ] M4L MIDI device: forward played notes to MCP server (for "match what I just played")
-- [ ] M4L sidechain probe: drives the device under test with a known MIDI pattern during sweeps
+- [ ] M4L sidechain probe: drives the device under test with a known MIDI pattern during sound-modeling sweeps (would also unblock real-device `sound_probe_device`)
 - [ ] M4L LFO/macro proxy for params not in LOM
-- [ ] Verify the shipped `.maxpat` actually opens cleanly in Max (currently best-effort JSON; user may need to rebuild from PROTOCOL.md)
 
 ## Phase 6 — Generators + stems (DONE; final import step pending Phase 2)
 

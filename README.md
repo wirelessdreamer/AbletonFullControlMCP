@@ -4,7 +4,7 @@
 
 A Model Context Protocol (MCP) server that lets an LLM client (Claude Desktop, Claude Code, Cursor, etc.) drive Ableton Live 11 with **full-surface natural-language control** — clip and MIDI editing, instrument and effect loading, sound design ("more aggressive", "warmer attack"), song-structure manipulation in bar counts ("extend the breakdown by 4 bars"), full bounce-to-wav-and-mp3 (mix + stems), audio capture, knowledge RAG over the official manual, and reverse-engineering sounds from a reference clip.
 
-> Status: **200+ tools across 25+ categories.** Phases 1, 3, 4, 5 (audio capture), and 6 (generators + stems) are real. Sound-understanding stack — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process test bench, 44-preset library — ships end-to-end. Inventory tooling bulk-scans every installed instrument. The bounce pipeline produces wav + mp3 (full mix and stems) given the M4L tape device or a configured loopback.
+> Status: **200+ tools across 25+ categories.** Phases 1, 3, 4, and 6 (generators + stems) are real. Sound-understanding stack — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process test bench, 44-preset library — ships end-to-end. Inventory tooling bulk-scans every installed instrument. The bounce pipeline produces wav + mp3 (full mix and per-track stems) using Live's built-in Resampling input — no Max for Live or loopback driver required.
 
 ## Comparison vs the projects we built on
 
@@ -24,15 +24,14 @@ This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server
 | Listeners / event subscriptions | **9 poll-based subscription tools** | no | partial |
 | MIDI file I/O on disk | **6 tools** (load/export/quantize/transpose/humanize/summary) | no | no |
 | Audio analysis (librosa) | **MFCC, key, tempo, spectral, similarity** | no | no |
-| Sound modeling (probe → match → describe) | **yes** (offline pipeline + LiveRenderer) | no | no |
+| Sound modeling (probe → match → describe) | **yes** (offline synth_stub pipeline; real-device capture pending) | no | no |
 | Semantic vocabulary (109 descriptors → feature deltas) | **yes** | no | no |
 | NL sound shaping ("brighter and punchier") | **yes** (`shape_predict` / `shape_apply`) | no | no |
 | Per-device sound rules ("aggressive on Drift") | **yes** (curated per-device) | no | no |
 | Song structure in bar counts | **yes** (`structure_*` tools) | no | no |
 | Inventory of installed instruments | **yes** (`inventory_scan_all`) | no | no |
 | Stock device schemas | **57 devices** | no | no |
-| Audio capture (M4L tape + loopback fallback) | **yes** | no | no |
-| Bounce to wav / stems / mp3 | **yes** (full mix + per-track stems, libmp3lame) | no | no |
+| Bounce to wav / stems / mp3 | **yes** (Live Resampling track + libmp3lame, full mix + per-track stems in one pass) | no | no |
 | Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers / TF-IDF fallback) | no | no |
 | AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no |
 | Stem splitting (Demucs) | **yes** (optional `[stems]` extra) | no | no |
@@ -76,7 +75,7 @@ So we built the layers a musician actually needs above all of those:
 6. **A song-structure model** (`structure/`) that talks in bar counts and section names — the dialect this README's user uses.
 7. **An NL shaping engine** (`shaping/`) and a probe-based sound-modeling pipeline (`sound/`) for matching reference audio.
 8. **An inventory tool** (`inventory/`) that walks the user's installed-instrument library and writes a manifest.
-9. **A bounce pipeline** (`bounce/`) — wav + mp3 (libmp3lame via ffmpeg), full mix and per-track stems, via the M4L tape device or a sounddevice loopback fallback.
+9. **A bounce pipeline** (`bounce/`) — wav + mp3 (libmp3lame via ffmpeg), full mix and per-track stems, via Live's built-in Resampling input. One playback pass captures every requested track in parallel; no Max for Live or loopback driver required.
 10. **A knowledge RAG layer** (`knowledge/`) over the Ableton manual + Cookbook for grounded how-to answers.
 
 Net result: 200+ tools that the LLM picks across as the conversation moves between "what's loaded?", "tweak this knob", "extend this section", and "render the result". You can have the entire conversation in producer's language; we translate to OSC + LOM behind the scenes.
@@ -102,8 +101,6 @@ Net result: 200+ tools that the LLM picks across as the conversation moves betwe
                                                              |  system.reload)       |
                                                              +-----------------------+
                                               (both run as Live Remote Scripts)
-
-                          + AbletonFullControlTape M4L device (audio capture for bounce)
 ```
 
 ## One-time install
@@ -119,16 +116,14 @@ pip install -e .
 #   pip install -e ".[knowledge]"   # sentence-transformers + sqlite-vec for the manual RAG
 #   pip install -e ".[stems]"       # demucs for stem splitting (~2 GB torch)
 #   pip install -e ".[musicgen]"    # audiocraft for local MusicGen (~4 GB torch+xformers)
-#   pip install -e ".[capture]"     # sounddevice for the loopback bounce backend
 #   pip install -e ".[all-heavy]"   # everything heavy
 ```
 
-### 2. Install the Live Remote Scripts + tape device
+### 2. Install the Live Remote Scripts
 
 ```powershell
 python -m ableton_mcp.scripts.install_abletonosc   # transport, tracks, clips, devices, scenes, ...
 python -m ableton_mcp.scripts.install_bridge       # browser, group/freeze/flatten, save, ...
-python -m ableton_mcp.scripts.install_tape         # M4L audio-capture device (for bounce)
 ```
 
 > **Two Remote Scripts, different ownership.** Step 2 installs *two* Live
@@ -149,13 +144,7 @@ python -m ableton_mcp.scripts.install_tape         # M4L audio-capture device (f
 
 In Ableton: **Preferences → Link/Tempo/MIDI → Control Surface** — set two free slots to **AbletonOSC** and **AbletonFullControlBridge**. Both can run side-by-side; AbletonOSC uses UDP 11000/11001, the bridge uses TCP 11002.
 
-For the tape device (only needed for the realtime bounce path — `inventory_*` and parameter-level tools do not need it):
-
-1. In Live, browse to `User Library → Presets → Audio Effects → Max Audio Effect → AbletonFullControlTape`, drag `AbletonFullControlTape.maxpat` onto a track. Max for Live opens.
-2. In Max: **File → Save As Device... → AbletonFullControlTape.amxd** (same folder). This compiles the .amxd Live can load.
-3. Drop the freshly-saved .amxd onto whichever track's output you want to capture (the **Master** track for full-mix bounce; per-track for stem bounce).
-
-If you'd rather skip Max entirely, set `ABLETON_MCP_CAPTURE_BACKEND=loopback`, install `pip install -e ".[capture]"` plus VB-Audio Cable (Windows) or BlackHole (macOS), and point `ABLETON_MCP_LOOPBACK_DEVICE` at the loopback input.
+The bounce pipeline (`bounce_song`, `bounce_tracks`, `bounce_enabled`) uses Live's built-in **Resampling** input — no extra setup, just install ffmpeg if you want mp3 alongside the wav.
 
 ### 3. (Optional) Build the knowledge index
 
@@ -216,7 +205,6 @@ AbletonFullControlMCP stands on a stack of open-source work. **[NOTICE.md](NOTIC
 - **[ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp)** by Siddharth Ahuja (MIT) — the original "MCP-talks-to-Live" project. The architectural shape — *one Live Remote Script listening for external commands and dispatching to the LOM* — is theirs. We diverged on transport (we ride AbletonOSC) and on scope.
 - **[Simon-Kansara/ableton-live-mcp-server](https://github.com/Simon-Kansara/ableton-live-mcp-server)** — also sits on AbletonOSC; useful sibling project. Their handlers' shape informed ours where they overlap.
 - **[ideoforms/pylive](https://github.com/ideoforms/pylive)** — Python wrapper for AbletonOSC; informs how we structured the async OSC client (FIFO correlation, listener queues).
-- **[JIKASSA/terminaldaw](https://github.com/JIKASSA/terminaldaw)** — prior art for the *Python → OSC → Max for Live → LOM* shape used by `AbletonFullControlTape`.
 - **[mcp](https://github.com/modelcontextprotocol/python-sdk)** (Anthropic, MIT) — the official MCP Python SDK; FastMCP registers all our tools.
 - Plus librosa, scipy, scikit-learn, mido, pretty_midi, python-osc, httpx, pydantic, soundfile, numpy — and optionally sentence-transformers, demucs, audiocraft. Full list in [NOTICE.md](NOTICE.md).
 

@@ -35,7 +35,6 @@ from .tools import (
     sound_shaping,
     structure,
     suno,
-    tape,
     tracks,
     transport,
     view,
@@ -92,9 +91,8 @@ def build_server() -> FastMCP:
     sound_shaping.register(mcp)
     bench.register(mcp)
     presets.register(mcp)
-    # Live integration — inventory of installed instruments + tape audio capture.
+    # Live integration — inventory of installed instruments.
     inventory.register(mcp)
-    tape.register(mcp)
     # Bounce / export pipeline — wav + mp3, full mix and stems.
     bounce.register(mcp)
     # Song structure — bar-counted dialect, sections, edit/loop/jump.

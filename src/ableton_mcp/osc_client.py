@@ -25,6 +25,7 @@ without crossing the wires.
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 from collections import defaultdict, deque
 from typing import Any, Iterable
@@ -38,12 +39,26 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 
+# Windows reports EADDRINUSE as WSAEADDRINUSE = 10048 via WinError; on
+# POSIX it's errno.EADDRINUSE (98 on Linux, 48 on macOS). Match either.
+_ADDR_IN_USE_ERRNOS = {errno.EADDRINUSE, 10048}
+
+
 class AbletonOSCError(RuntimeError):
     pass
 
 
 class AbletonOSCTimeout(AbletonOSCError):
     pass
+
+
+class AbletonOSCAddressInUse(AbletonOSCError):
+    """Raised when the reply port is already bound by another process.
+
+    The most common cause is a second MCP host (e.g. Claude Code desktop +
+    Claude Code CLI, or Claude Desktop + Cursor) each spawning its own copy
+    of this server — only one can hold UDP/recv_port; the rest fail here.
+    """
 
 
 _WaiterKey = tuple[str, tuple[Any, ...]]
@@ -73,7 +88,28 @@ class AbletonOSCClient:
         self._server = AsyncIOOSCUDPServer(
             (self._cfg.osc_host, self._cfg.osc_recv_port), dispatcher, self._loop
         )
-        self._transport, _ = await self._server.create_serve_endpoint()
+        try:
+            self._transport, _ = await self._server.create_serve_endpoint()
+        except OSError as exc:
+            self._server = None
+            self._transport = None
+            if exc.errno in _ADDR_IN_USE_ERRNOS or "10048" in str(exc):
+                raise AbletonOSCAddressInUse(
+                    f"Cannot bind UDP/{self._cfg.osc_recv_port} on "
+                    f"{self._cfg.osc_host} — the port is already in use. "
+                    "The most likely cause is another MCP host running this "
+                    "server (e.g. both Claude Code CLI and the Claude Code "
+                    "desktop app, or Claude Desktop + Cursor); each spawns "
+                    "its own MCP subprocess and only one can own the OSC "
+                    "reply port. Close the other client, or set "
+                    "ABLETON_OSC_RECV_PORT (and matching AbletonOSC config) "
+                    "to a different port. See docs/TROUBLESHOOTING.md "
+                    "'Port conflict' for details."
+                ) from exc
+            raise AbletonOSCError(
+                f"Failed to bind UDP/{self._cfg.osc_recv_port} on "
+                f"{self._cfg.osc_host}: {exc}"
+            ) from exc
         log.info(
             "OSC client listening on %s:%d, sending to %s:%d",
             self._cfg.osc_host, self._cfg.osc_recv_port,
@@ -152,7 +188,11 @@ class AbletonOSCClient:
                     self._waiters.pop(key, None)
             raise AbletonOSCTimeout(
                 f"OSC request {address!r} args={args!r} timed out after {timeout}s. "
-                "Is Ableton Live open and AbletonOSC enabled in Preferences > Link/Tempo/MIDI?"
+                "Common causes: (1) Ableton Live isn't open; (2) AbletonOSC isn't "
+                "the active Control Surface in Preferences > Link/Tempo/MIDI; "
+                "(3) another MCP host (Claude Code/Desktop/Cursor) is also running "
+                "this server and is intercepting the reply on UDP/"
+                f"{self._cfg.osc_recv_port}. Run live_ping for a structured diagnostic."
             )
 
     async def ping(self) -> bool:
@@ -178,11 +218,21 @@ _singleton: AbletonOSCClient | None = None
 
 
 async def get_client(cfg: Config | None = None) -> AbletonOSCClient:
-    """Return the process-wide AbletonOSC client, starting it if needed."""
+    """Return the process-wide AbletonOSC client, starting it if needed.
+
+    If startup fails (e.g. the reply port is taken by another MCP instance)
+    we clear the singleton so a later retry — after the user closes the
+    conflicting client — actually re-attempts the bind.
+    """
     global _singleton
     if _singleton is None:
-        _singleton = AbletonOSCClient(cfg or Config.from_env())
-        await _singleton.start()
+        client = AbletonOSCClient(cfg or Config.from_env())
+        try:
+            await client.start()
+        except Exception:
+            # Don't cache a half-initialized client; the next call should retry.
+            raise
+        _singleton = client
     return _singleton
 
 

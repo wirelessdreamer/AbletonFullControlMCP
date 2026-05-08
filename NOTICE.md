@@ -51,16 +51,6 @@ leaves (browser, group/freeze/flatten, save, session→arrangement copy),
 but the architectural shape — a Live Remote Script that listens for
 external commands — comes from his project.
 
-### JIKASSA/terminaldaw — prior art for Python→OSC→M4L pattern
-
-- **Project:** https://github.com/JIKASSA/terminaldaw
-- **Licence:** check repository
-
-A "terminal DAW" that sends OSC from Python to a Max for Live device which
-then routes to the Live Object Model. The shape of our
-`live_max_for_live/AbletonFullControlTape/` device — OSC-triggered audio capture
-inside a M4L patcher — is inspired by their general approach.
-
 ## Python-side runtime dependencies
 
 These are pinned in `pyproject.toml` and pulled in by `pip install -e .`.
@@ -72,7 +62,7 @@ These are pinned in `pyproject.toml` and pulled in by `pip install -e .`.
 | [`mido`](https://github.com/mido/mido) | Ole Martin Bjørndalen | MIT | MIDI message + file primitives, mostly read paths in `tools/midi_files.py`. |
 | [`pretty_midi`](https://github.com/craffel/pretty-midi) | Colin Raffel | MIT | High-level MIDI file editing (quantise / transpose / humanise). |
 | [`librosa`](https://librosa.org/) | LibROSA developers | ISC | All audio feature extraction in `sound/features.py` and `tools/audio_analysis.py`. |
-| [`soundfile`](https://github.com/bastibe/python-soundfile) | Bastian Bechtold | BSD-3-Clause | wav read/write, including the tape capture round-trip. |
+| [`soundfile`](https://github.com/bastibe/python-soundfile) | Bastian Bechtold | BSD-3-Clause | wav read/write for the bounce pipeline and audio analysis. |
 | [`numpy`](https://numpy.org/) | NumFOCUS | BSD-3-Clause | Numerical arrays everywhere. |
 | [`scipy`](https://scipy.org/) | NumFOCUS | BSD-3-Clause | `scipy.signal` for the synth bench filters; `scipy.optimize.minimize` for `sound_match` refinement; `scipy.stats.qmc` for Latin-Hypercube sweep planning. |
 | [`scikit-learn`](https://scikit-learn.org/) | scikit-learn developers | BSD-3-Clause | KMeans for `preset_discover`; TF-IDF fallback for the knowledge index. |

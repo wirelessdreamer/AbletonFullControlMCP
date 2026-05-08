@@ -6,7 +6,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from ..osc_client import get_client
+from ..config import Config
+from ..osc_client import AbletonOSCAddressInUse, get_client
 
 
 # Quantization values accepted by Live (per LOM):
@@ -21,15 +22,49 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def live_ping() -> dict[str, Any]:
         """Verify AbletonOSC is reachable. Call this first if anything else fails."""
-        client = await get_client()
+        cfg = Config.from_env()
+        try:
+            client = await get_client()
+        except AbletonOSCAddressInUse as exc:
+            # Distinct case: this MCP server itself can't bind the reply port,
+            # so the issue is local (another MCP host already running) rather
+            # than anything to do with Live or AbletonOSC.
+            return {
+                "ok": False,
+                "cause": "reply_port_in_use",
+                "recv_port": cfg.osc_recv_port,
+                "hint": (
+                    f"This MCP server can't bind UDP/{cfg.osc_recv_port} for "
+                    "AbletonOSC replies — another process owns it. Almost "
+                    "always this means a second MCP host is already running "
+                    "this server (e.g. both Claude Code CLI and Claude Code "
+                    "desktop, or Claude Desktop + Cursor). Close the other "
+                    "client and retry, or set ABLETON_OSC_RECV_PORT to a "
+                    "free port (and update AbletonOSC's consts.py to match). "
+                    "Use `Get-NetUDPEndpoint -LocalPort "
+                    f"{cfg.osc_recv_port}` on Windows / `lsof -i UDP:"
+                    f"{cfg.osc_recv_port}` on macOS/Linux to identify the "
+                    "owner."
+                ),
+                "detail": str(exc),
+            }
         ok = await client.ping()
         if not ok:
             return {
                 "ok": False,
+                "cause": "no_reply",
+                "recv_port": cfg.osc_recv_port,
                 "hint": (
-                    "AbletonOSC did not reply on UDP/11001. Confirm Live is open, "
-                    "AbletonOSC is enabled in Preferences > Link/Tempo/MIDI > Control Surface, "
-                    "and no other process is bound to port 11001."
+                    f"AbletonOSC did not reply on UDP/{cfg.osc_recv_port}. "
+                    "Walk through, in order: (1) Ableton Live is open and "
+                    "loaded a Set; (2) Preferences > Link/Tempo/MIDI > "
+                    "Control Surface has AbletonOSC selected (it's a Control "
+                    "Surface, not a MIDI input/output); (3) Live's Log.txt "
+                    "shows 'AbletonOSC: Listening for OSC on port 11000' at "
+                    "startup — if not, the Remote Script failed to load; "
+                    "(4) no other MCP host is also running this server "
+                    "(replies route to whichever process is bound to UDP/"
+                    f"{cfg.osc_recv_port}, not necessarily this one)."
                 ),
             }
         version = await client.request("/live/application/get/version")

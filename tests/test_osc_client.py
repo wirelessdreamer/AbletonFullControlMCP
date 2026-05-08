@@ -10,7 +10,11 @@ from pythonosc.osc_server import AsyncIOOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 
 from ableton_mcp.config import Config
-from ableton_mcp.osc_client import AbletonOSCClient, AbletonOSCTimeout
+from ableton_mcp.osc_client import (
+    AbletonOSCAddressInUse,
+    AbletonOSCClient,
+    AbletonOSCTimeout,
+)
 
 
 @pytest.fixture
@@ -64,3 +68,28 @@ async def test_request_times_out_when_no_server() -> None:
             await client.request("/live/song/get/tempo")
     finally:
         await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_raises_address_in_use_when_recv_port_taken() -> None:
+    """Reproduce the multi-MCP-instance scenario: a second client trying to
+    bind a recv port already held by another process must raise our typed
+    AbletonOSCAddressInUse rather than leaking the raw OSError.
+    """
+    # First server "owns" the recv port.
+    cfg = Config(osc_send_port=19000, osc_recv_port=19001, request_timeout=0.4)
+    first = AbletonOSCClient(cfg)
+    await first.start()
+    try:
+        # Second client targets the same recv port -> should raise our typed
+        # error, not OSError/WinError.
+        second = AbletonOSCClient(cfg)
+        with pytest.raises(AbletonOSCAddressInUse) as exc_info:
+            await second.start()
+        # Hint must mention the multi-host root cause so users aren't left
+        # decoding a raw winerror.
+        message = str(exc_info.value).lower()
+        assert "19001" in str(exc_info.value)
+        assert "mcp" in message or "claude" in message
+    finally:
+        await first.stop()
