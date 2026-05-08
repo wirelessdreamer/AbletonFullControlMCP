@@ -8,35 +8,40 @@ A Model Context Protocol (MCP) server that lets an LLM client (Claude Desktop, C
 
 ## Comparison vs the projects we built on
 
-| Capability | [ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp) | [Simon-Kansara/ableton-live-mcp-server](https://github.com/Simon-Kansara/ableton-live-mcp-server) | [ideoforms/AbletonOSC](https://github.com/ideoforms/AbletonOSC) | [ideoforms/pylive](https://github.com/ideoforms/pylive) | **AbletonFullControlMCP** |
+| Capability | **AbletonFullControlMCP** | [ableton-mcp][a] | [live-mcp-server][b] | [AbletonOSC][c] | [pylive][d] |
 |---|---|---|---|---|---|
-| Project type | MCP server | MCP server | Live Remote Script (OSC) | Python wrapper around AbletonOSC | MCP server (this repo) |
-| Tool count exposed to LLM | ~16 | ~20 | n/a | n/a | **200+** |
-| Transport | Custom TCP socket + custom Remote Script | OSC via AbletonOSC | OSC | OSC | **OSC + companion JSON/TCP bridge** |
-| Live Object Model coverage | partial (tracks, clips, basic devices) | most of LOM (rides AbletonOSC) | full LOM | full LOM | **full LOM + browser + group/freeze/flatten + save + session→arrangement** |
-| Browser / preset loading | yes (custom RS) | no | no | no | **yes** (companion bridge) |
-| Group / freeze / flatten | no | no | no | no | **yes** |
-| Session → Arrangement copy | no | no | no | no | **yes** (the `clip.duplicate_to_arrangement` op) |
-| Listeners / event subscriptions | no | partial | yes (raw) | partial | **yes — poll-based, 9 subscription tools** |
-| MIDI file I/O on disk | no | no | n/a | partial | **6 tools (load/export/quantize/transpose/humanize/summary)** |
-| Audio analysis (librosa) | no | no | n/a | n/a | **MFCC, key, tempo, spectral features, similarity** |
-| Sound modeling (probe → match → describe) | no | no | n/a | n/a | **yes (offline pipeline + LiveRenderer once tape is live)** |
-| Semantic vocabulary (109 descriptors → feature deltas) | no | no | n/a | n/a | **yes** |
-| NL sound shaping ("brighter and punchier") | no | no | n/a | n/a | **yes** (`shape_predict`/`shape_apply`) |
-| Per-device sound rules ("aggressive on Drift") | no | no | n/a | n/a | **yes** (`sound_design/` with curated per-device rules) |
-| Song structure in bar counts | no | no | n/a | n/a | **yes** (`structure_*` tools) |
-| Inventory of installed instruments → manifest | no | no | n/a | n/a | **yes** (`inventory_scan_all`) |
-| Stock device schemas (57 devices) | no | no | n/a | n/a | **yes** |
-| Audio capture (M4L tape device) | no | no | no | no | **yes** + sounddevice loopback fallback |
-| Bounce to wav (full mix) | no | no | no | no | **yes** |
-| Bounce to wav (per-track stems) | no | no | no | no | **yes** |
-| Bounce to mp3 (libmp3lame via ffmpeg) | no | no | no | no | **yes** |
-| Knowledge RAG over Live manual + Cookbook | no | no | n/a | n/a | **yes** (sentence-transformers or TF-IDF fallback) |
-| AI generators (Suno / MusicGen / Stable Audio) | no | no | n/a | n/a | **pluggable Generator interface** |
-| Stem splitting (Demucs) | no | no | n/a | n/a | **yes** (optional `[stems]` extra) |
-| Hot-reload of bridge handlers | n/a | no | yes (`/live/api/reload`) | n/a | **yes** (`system.reload`) |
-| Reply correlation under concurrent calls | n/a | n/a | FIFO per address | FIFO per address | **per-(address, args-prefix) FIFO** |
-| Auto-installer for clients (Claude Desktop + Code, idempotent merge) | no | no | n/a | n/a | **yes** (`install_clients` script) |
+| Project type | MCP server (this repo) | MCP server | MCP server | Live Remote Script (OSC) | Python wrapper around AbletonOSC |
+| Tool count exposed to LLM | **200+** | ~16 | ~20 | n/a | n/a |
+| Transport | **OSC + companion JSON/TCP bridge** | Custom TCP + custom Remote Script | OSC via AbletonOSC | OSC | OSC |
+| Live Object Model coverage | **full LOM + browser + group/freeze/flatten + save + session→arrangement** | partial (tracks, clips, basic devices) | most of LOM (rides AbletonOSC) | full LOM | full LOM |
+| Browser / preset loading | **yes** (companion bridge) | yes (custom RS) | no | no | no |
+| Group / freeze / flatten | **yes** | no | no | no | no |
+| Session → Arrangement copy | **yes** (`clip.duplicate_to_arrangement`) | no | no | no | no |
+| Listeners / event subscriptions | **yes — poll-based, 9 subscription tools** | no | partial | yes (raw) | partial |
+| MIDI file I/O on disk | **6 tools (load/export/quantize/transpose/humanize/summary)** | no | no | n/a | partial |
+| Audio analysis (librosa) | **MFCC, key, tempo, spectral features, similarity** | no | no | n/a | n/a |
+| Sound modeling (probe → match → describe) | **yes** (offline pipeline + LiveRenderer once tape is live) | no | no | n/a | n/a |
+| Semantic vocabulary (109 descriptors → feature deltas) | **yes** | no | no | n/a | n/a |
+| NL sound shaping ("brighter and punchier") | **yes** (`shape_predict` / `shape_apply`) | no | no | n/a | n/a |
+| Per-device sound rules ("aggressive on Drift") | **yes** (`sound_design/`, curated per-device rules) | no | no | n/a | n/a |
+| Song structure in bar counts | **yes** (`structure_*` tools) | no | no | n/a | n/a |
+| Inventory of installed instruments → manifest | **yes** (`inventory_scan_all`) | no | no | n/a | n/a |
+| Stock device schemas (57 devices) | **yes** | no | no | n/a | n/a |
+| Audio capture (M4L tape device) | **yes** + sounddevice loopback fallback | no | no | no | no |
+| Bounce to wav (full mix) | **yes** | no | no | no | no |
+| Bounce to wav (per-track stems) | **yes** | no | no | no | no |
+| Bounce to mp3 (libmp3lame via ffmpeg) | **yes** | no | no | no | no |
+| Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers or TF-IDF fallback) | no | no | n/a | n/a |
+| AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no | n/a | n/a |
+| Stem splitting (Demucs) | **yes** (optional `[stems]` extra) | no | no | n/a | n/a |
+| Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no | yes (`/live/api/reload`) | n/a |
+| Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a | FIFO per address | FIFO per address |
+| Auto-installer for clients (Claude Desktop + Code, idempotent merge) | **yes** (`install_clients` script) | no | no | n/a | n/a |
+
+[a]: https://github.com/ahujasid/ableton-mcp
+[b]: https://github.com/Simon-Kansara/ableton-live-mcp-server
+[c]: https://github.com/ideoforms/AbletonOSC
+[d]: https://github.com/ideoforms/pylive
 
 ## Why we built this in our context
 
