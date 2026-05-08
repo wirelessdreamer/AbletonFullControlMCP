@@ -1,0 +1,83 @@
+[project]
+name = "ableton-full-control-mcp"
+version = "0.3.0"
+description = "AbletonFullControlMCP — Model Context Protocol server giving an LLM full-surface control of Ableton Live 11: natural-language editing of clips/devices, sound design, song structure, knowledge RAG, render + stems."
+requires-python = ">=3.11"
+authors = [{ name = "AbletonFullControlMCP" }]
+readme = "README.md"
+license = { text = "MIT" }
+# Distribution name and Python module name intentionally differ:
+#   distribution = ableton-full-control-mcp (PyPI / pip / pyproject)
+#   module       = ableton_mcp              (kept short for `import` ergonomics
+#                                            and back-compat with existing
+#                                            client configs that reference it)
+# Same pattern as scikit-learn → sklearn or pillow → PIL.
+
+dependencies = [
+    "mcp>=1.2.0",
+    "python-osc>=1.8.3",
+    "mido>=1.3.2",
+    "pretty_midi>=0.2.10",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "librosa>=0.10.2",
+    "soundfile>=0.12.1",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "anyio>=4.4",
+    "platformdirs>=4.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+# Phase 4 RAG — semantic embeddings for the Ableton manual + Cookbook index.
+# Without these, the indexer falls back to TF-IDF (sklearn, already installed).
+knowledge = [
+    "sentence-transformers>=2.7",
+    "sqlite-vec>=0.1.6",
+]
+# Phase 6 — Demucs stem splitting (vocals/drums/bass/other). Pulls torch + torchaudio (~2 GB).
+stems = [
+    "demucs>=4.0.1",
+]
+# Phase 6 — local MusicGen generator via Meta's audiocraft. Pulls torch + transformers + xformers (~4 GB).
+musicgen = [
+    "audiocraft>=1.3.0",
+]
+# Audio loopback capture — only needed if you pick the sounddevice fallback over the M4L tape device.
+# Pair with VB-Audio Cable on Windows or BlackHole on macOS.
+capture = [
+    "sounddevice>=0.4",
+]
+# Convenience: everything heavy at once.
+all-heavy = [
+    "ableton-mcp[knowledge,stems,musicgen,capture]",
+]
+
+[project.scripts]
+ableton-mcp = "ableton_mcp.__main__:main"
+ableton-mcp-install-osc = "ableton_mcp.scripts.install_abletonosc:main"
+ableton-mcp-install-bridge = "ableton_mcp.scripts.install_bridge:main"
+ableton-mcp-install-tape = "ableton_mcp.scripts.install_tape:main"
+ableton-mcp-install-clients = "ableton_mcp.scripts.install_clients:main"
+ableton-mcp-build-knowledge = "ableton_mcp.scripts.build_knowledge_index:main"
+ableton-mcp-generate-tools-doc = "ableton_mcp.scripts.generate_tools_doc:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ableton_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

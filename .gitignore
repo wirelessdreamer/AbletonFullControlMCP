@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+pip-wheel-metadata/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude / Cursor
+.claude/settings.local.json
+
+# Test/coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Audio / model artifacts (kept out of git, hold large blobs)
+artifacts/
+data/probes/
+data/renders/
+data/cache/
+*.wav
+*.flac
+*.mp3
+*.aiff
+*.npz
+*.parquet
+
+# AbletonOSC zip cache
+.cache/

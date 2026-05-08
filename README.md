@@ -1,0 +1,212 @@
+# AbletonFullControlMCP
+
+> Distribution name (PyPI / pip): `ableton-full-control-mcp`. Python module: `ableton_mcp` (kept short for `import` ergonomics + back-compat — same pattern as `scikit-learn` → `sklearn`). Wherever this README says "AbletonFullControlMCP", you're reading the project. Wherever code says `ableton_mcp`, you're reading the module.
+
+A Model Context Protocol (MCP) server that lets an LLM client (Claude Desktop, Claude Code, Cursor, etc.) drive Ableton Live 11 with **full-surface natural-language control** — clip and MIDI editing, instrument and effect loading, sound design ("more aggressive", "warmer attack"), song-structure manipulation in bar counts ("extend the breakdown by 4 bars"), full bounce-to-wav-and-mp3 (mix + stems), audio capture, knowledge RAG over the official manual, and reverse-engineering sounds from a reference clip.
+
+> Status: **200+ tools across 25+ categories.** Phases 1, 3, 4, 5 (audio capture), and 6 (generators + stems) are real. Sound-understanding stack — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process test bench, 44-preset library — ships end-to-end. Inventory tooling bulk-scans every installed instrument. The bounce pipeline produces wav + mp3 (full mix and stems) given the M4L tape device or a configured loopback.
+
+## Comparison vs the projects we built on
+
+| Capability | [ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp) | [Simon-Kansara/ableton-live-mcp-server](https://github.com/Simon-Kansara/ableton-live-mcp-server) | [ideoforms/AbletonOSC](https://github.com/ideoforms/AbletonOSC) | [ideoforms/pylive](https://github.com/ideoforms/pylive) | **AbletonFullControlMCP** |
+|---|---|---|---|---|---|
+| Project type | MCP server | MCP server | Live Remote Script (OSC) | Python wrapper around AbletonOSC | MCP server (this repo) |
+| Tool count exposed to LLM | ~16 | ~20 | n/a | n/a | **200+** |
+| Transport | Custom TCP socket + custom Remote Script | OSC via AbletonOSC | OSC | OSC | **OSC + companion JSON/TCP bridge** |
+| Live Object Model coverage | partial (tracks, clips, basic devices) | most of LOM (rides AbletonOSC) | full LOM | full LOM | **full LOM + browser + group/freeze/flatten + save + session→arrangement** |
+| Browser / preset loading | yes (custom RS) | no | no | no | **yes** (companion bridge) |
+| Group / freeze / flatten | no | no | no | no | **yes** |
+| Session → Arrangement copy | no | no | no | no | **yes** (the `clip.duplicate_to_arrangement` op) |
+| Listeners / event subscriptions | no | partial | yes (raw) | partial | **yes — poll-based, 9 subscription tools** |
+| MIDI file I/O on disk | no | no | n/a | partial | **6 tools (load/export/quantize/transpose/humanize/summary)** |
+| Audio analysis (librosa) | no | no | n/a | n/a | **MFCC, key, tempo, spectral features, similarity** |
+| Sound modeling (probe → match → describe) | no | no | n/a | n/a | **yes (offline pipeline + LiveRenderer once tape is live)** |
+| Semantic vocabulary (109 descriptors → feature deltas) | no | no | n/a | n/a | **yes** |
+| NL sound shaping ("brighter and punchier") | no | no | n/a | n/a | **yes** (`shape_predict`/`shape_apply`) |
+| Per-device sound rules ("aggressive on Drift") | no | no | n/a | n/a | **yes** (`sound_design/` with curated per-device rules) |
+| Song structure in bar counts | no | no | n/a | n/a | **yes** (`structure_*` tools) |
+| Inventory of installed instruments → manifest | no | no | n/a | n/a | **yes** (`inventory_scan_all`) |
+| Stock device schemas (57 devices) | no | no | n/a | n/a | **yes** |
+| Audio capture (M4L tape device) | no | no | no | no | **yes** + sounddevice loopback fallback |
+| Bounce to wav (full mix) | no | no | no | no | **yes** |
+| Bounce to wav (per-track stems) | no | no | no | no | **yes** |
+| Bounce to mp3 (libmp3lame via ffmpeg) | no | no | no | no | **yes** |
+| Knowledge RAG over Live manual + Cookbook | no | no | n/a | n/a | **yes** (sentence-transformers or TF-IDF fallback) |
+| AI generators (Suno / MusicGen / Stable Audio) | no | no | n/a | n/a | **pluggable Generator interface** |
+| Stem splitting (Demucs) | no | no | n/a | n/a | **yes** (optional `[stems]` extra) |
+| Hot-reload of bridge handlers | n/a | no | yes (`/live/api/reload`) | n/a | **yes** (`system.reload`) |
+| Reply correlation under concurrent calls | n/a | n/a | FIFO per address | FIFO per address | **per-(address, args-prefix) FIFO** |
+| Auto-installer for clients (Claude Desktop + Code, idempotent merge) | no | no | n/a | n/a | **yes** (`install_clients` script) |
+
+## Why we built this in our context
+
+The user is a working musician with Live 11.3 + Max for Live. The goal isn't "drive Live from the command line" — it's **"talk to an LLM the way you'd talk to a session engineer"**:
+
+- *"Make the lead guitar more aggressive in bars 28–32."*
+- *"Soften the piano in the breakdown."*
+- *"Extend the breakdown by 4 bars."*
+- *"Bounce stems and mp3 to `D:\exports\jrock\`."*
+- *"Build a J-rock instrumental in 6/8 at 144 BPM, 35 bars."*
+
+Existing tools couldn't carry that conversation:
+
+- **[AbletonOSC](https://github.com/ideoforms/AbletonOSC)** is excellent at exposing the LOM, but it's a transport — there's no MCP layer, no semantic vocabulary, no song-structure model. You hand-write OSC commands in beats. We use it as our backbone for ~70% of our tools.
+- **[ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp)** was the inspiration. It validated the "MCP server fronting Ableton" idea, but the surface is small (~16 tools, mostly track/clip CRUD), it rolls its own Remote Script in parallel to AbletonOSC instead of building on it, and it stops at the level "create a clip"—not "make this clip warmer".
+- **[Simon-Kansara/ableton-live-mcp-server](https://github.com/Simon-Kansara/ableton-live-mcp-server)** wraps AbletonOSC into MCP but stays at LOM-thin coverage, no sound-design layer, no song-structure model, no bounce.
+- **[pylive](https://github.com/ideoforms/pylive)** is a Python wrapper around AbletonOSC — useful for scripting but not exposing tools to an LLM.
+
+So we built the layers a musician actually needs above all of those:
+
+1. **Full LOM** via AbletonOSC (transport / tracks / clips / scenes / devices / cue points / view / arrangement / routing / MIDI mapping).
+2. **A complementary bridge** (`AbletonFullControlBridge`, our own JSON-over-TCP Remote Script on port 11002) for the things AbletonOSC doesn't expose: browser, group/freeze/flatten, save, session→arrangement copy, device deletion, hot reload.
+3. **A canonical schema library** (`device_schemas/`) for 57 stock devices with parameter names, ranges, and "recommended for sweep" hints.
+4. **A semantic vocabulary** (`semantics/`) — 109 descriptors mapping musician language ("bright", "warm", "punchy") to quantitative audio-feature deltas.
+5. **Per-device sound-design rules** (`sound_design/`) — curated mappings from descriptors to specific knobs on Drift/Operator/Wavetable/Tension/Reverb/Compressor/etc., so "more aggressive" actually moves the right faders on whatever instrument is on the track.
+6. **A song-structure model** (`structure/`) that talks in bar counts and section names — the dialect this README's user uses.
+7. **An NL shaping engine** (`shaping/`) and a probe-based sound-modeling pipeline (`sound/`) for matching reference audio.
+8. **An inventory tool** (`inventory/`) that walks the user's installed-instrument library and writes a manifest.
+9. **A bounce pipeline** (`bounce/`) — wav + mp3 (libmp3lame via ffmpeg), full mix and per-track stems, via the M4L tape device or a sounddevice loopback fallback.
+10. **A knowledge RAG layer** (`knowledge/`) over the Ableton manual + Cookbook for grounded how-to answers.
+
+Net result: 200+ tools that the LLM picks across as the conversation moves between "what's loaded?", "tweak this knob", "extend this section", and "render the result". You can have the entire conversation in producer's language; we translate to OSC + LOM behind the scenes.
+
+## Architecture
+
+```
++--------------------+      stdio JSON-RPC       +--------------------+
+|  MCP Client        |  <-------------------->   | ableton-full-      |
+|  (Claude Desktop / |                           | control-mcp        |
+|  Claude Code)      |                           | (Python server,    |
++--------------------+                           |  module ableton_mcp)|
+                                                 +-----+--------+-----+
+                                                       |        |
+                                  OSC (UDP 11000/11001) JSON (TCP 11002)
+                                                       |        |
+                                       +---------------v--+  +--v--------------------+
+                                       | AbletonOSC       |  | AbletonFullControlBridge      |
+                                       | (full LOM)       |  | (browser, group,      |
+                                       |  by Daniel Jones |  |  freeze/flatten,      |
+                                       +------------------+  |  save, ses→arr,       |
+                                                             |  delete_device,       |
+                                                             |  system.reload)       |
+                                                             +-----------------------+
+                                              (both run as Live Remote Scripts)
+
+                          + AbletonFullControlTape M4L device (audio capture for bounce)
+```
+
+## One-time install
+
+### 1. Install the Python server
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+
+# Optional extras (each is heavy; install only what you need):
+#   pip install -e ".[knowledge]"   # sentence-transformers + sqlite-vec for the manual RAG
+#   pip install -e ".[stems]"       # demucs for stem splitting (~2 GB torch)
+#   pip install -e ".[musicgen]"    # audiocraft for local MusicGen (~4 GB torch+xformers)
+#   pip install -e ".[capture]"     # sounddevice for the loopback bounce backend
+#   pip install -e ".[all-heavy]"   # everything heavy
+```
+
+### 2. Install the Live Remote Scripts + tape device
+
+```powershell
+python -m ableton_mcp.scripts.install_abletonosc   # transport, tracks, clips, devices, scenes, ...
+python -m ableton_mcp.scripts.install_bridge       # browser, group/freeze/flatten, save, ...
+python -m ableton_mcp.scripts.install_tape         # M4L audio-capture device (for bounce)
+```
+
+> **Two Remote Scripts, different ownership.** Step 2 installs *two* Live
+> Remote Scripts and they look the same in Live's Preferences — but they're
+> deliberately split:
+>
+> - **AbletonOSC** — third-party project by Daniel Jones (BSD-3-Clause). We
+>   download it unmodified from [its upstream GitHub](https://github.com/ideoforms/AbletonOSC)
+>   at install time and never touch the source. ~70% of our 219 tools route
+>   through it. We don't fork or rebrand it because the licence requires
+>   preserving the original name on unmodified distributions, and renaming
+>   would falsely claim authorship of someone else's work.
+> - **AbletonFullControlBridge** — ours. Fills the gaps AbletonOSC doesn't
+>   cover (browser, group/freeze/flatten, save, session→arrangement, hot
+>   reload).
+>
+> Both must be enabled for AbletonFullControlMCP to have its full surface.
+
+In Ableton: **Preferences → Link/Tempo/MIDI → Control Surface** — set two free slots to **AbletonOSC** and **AbletonFullControlBridge**. Both can run side-by-side; AbletonOSC uses UDP 11000/11001, the bridge uses TCP 11002.
+
+For the tape device (only needed for the realtime bounce path — `inventory_*` and parameter-level tools do not need it):
+
+1. In Live, browse to `User Library → Presets → Audio Effects → Max Audio Effect → AbletonFullControlTape`, drag `AbletonFullControlTape.maxpat` onto a track. Max for Live opens.
+2. In Max: **File → Save As Device... → AbletonFullControlTape.amxd** (same folder). This compiles the .amxd Live can load.
+3. Drop the freshly-saved .amxd onto whichever track's output you want to capture (the **Master** track for full-mix bounce; per-track for stem bounce).
+
+If you'd rather skip Max entirely, set `ABLETON_MCP_CAPTURE_BACKEND=loopback`, install `pip install -e ".[capture]"` plus VB-Audio Cable (Windows) or BlackHole (macOS), and point `ABLETON_MCP_LOOPBACK_DEVICE` at the loopback input.
+
+### 3. (Optional) Build the knowledge index
+
+```powershell
+python -m ableton_mcp.scripts.build_knowledge_index --source both
+```
+
+Populates `data/knowledge/index.sqlite` so `ableton_search_docs` and `ableton_explain` return grounded citations.
+
+### 4. Wire up your MCP client (one command)
+
+```powershell
+python -m ableton_mcp.scripts.install_clients --user
+```
+
+Merges an `ableton` MCP server entry into:
+- `%APPDATA%\Claude\claude_desktop_config.json` (Claude Desktop)
+- `<repo>/.mcp.json` (Claude Code, project scope)
+- `~/.claude.json` (Claude Code, user scope — drop the `--user` flag to skip)
+
+Existing servers are preserved. Each file is backed up before edits. Add `--dry-run` to preview, `--uninstall` to roll back. Then **fully quit and relaunch** whichever client you're using.
+
+See `docs/CLAUDE_DESKTOP.md`, `docs/CLAUDE_CODE.md`, `docs/CURSOR.md` for full per-client walkthroughs.
+
+### 5. Smoke test
+
+```powershell
+python -m ableton_mcp.scripts.smoke_test
+```
+
+### 6. Regenerate the auto-doc (after pulling)
+
+```powershell
+python -m ableton_mcp.scripts.generate_tools_doc
+# rewrites docs/TOOLS.md from the live FastMCP registration (~2,700 lines)
+```
+
+## Roadmap & status
+
+See [ROADMAP.md](ROADMAP.md) for the six phases and current state.
+
+## Talking to it like a musician
+
+Examples that "just work" once everything is installed and wired:
+
+- *"What's the state of my set?"* → `live_get_state` + `track_list`.
+- *"List every instrument I have installed in Live."* → `inventory_scan_browser`.
+- *"Build a 6/8 J-rock instrumental at 144 BPM, 35 bars: intro 4 / groove 8 / breakdown 6 / interlude 6 / buildup 3 / final 8. Drums, bass, rhythm + lead guitar, piano. Use Rock Kit, Electric Bass Palm, Power Chords Guitar through a Crunch amp, Hard Picked Guitar through a Lead amp, Grand Piano Lost Ship."* → orchestrated through `live_set_tempo`, `live_set_time_signature`, `track_create_midi`, `browser.search` + `browser.load_device`/`load_drum_kit`, `clip_create_midi` + `clip_add_notes`, `clip.duplicate_to_arrangement`.
+- *"Make the lead guitar more aggressive."* → `sound_describe_track(7)` + `sound_apply_descriptor(7, "aggressive")` (powered by per-device rules in `sound_design/`).
+- *"Extend the breakdown by 4 bars."* → `structure_extend(structure, "breakdown", 4)` then re-render.
+- *"Bounce wav + mp3 stems and full mix to `D:\exports\jrock\`."* → `bounce_full_pipeline`.
+
+## Credits
+
+AbletonFullControlMCP stands on a stack of open-source work. **[NOTICE.md](NOTICE.md)** has the full third-party attribution with licences and exactly what we use each project for.
+
+- **[AbletonOSC](https://github.com/ideoforms/AbletonOSC)** by Daniel Jones (`ideoforms`, BSD-3-Clause) — the OSC Remote Script that exposes Live's Object Model. We install it unmodified into your Live User Library; it's the transport for ~70% of our 200+ tools. Without it, this project is impossible.
+- **[ahujasid/ableton-mcp](https://github.com/ahujasid/ableton-mcp)** by Siddharth Ahuja (MIT) — the original "MCP-talks-to-Live" project. The architectural shape — *one Live Remote Script listening for external commands and dispatching to the LOM* — is theirs. We diverged on transport (we ride AbletonOSC) and on scope.
+- **[Simon-Kansara/ableton-live-mcp-server](https://github.com/Simon-Kansara/ableton-live-mcp-server)** — also sits on AbletonOSC; useful sibling project. Their handlers' shape informed ours where they overlap.
+- **[ideoforms/pylive](https://github.com/ideoforms/pylive)** — Python wrapper for AbletonOSC; informs how we structured the async OSC client (FIFO correlation, listener queues).
+- **[JIKASSA/terminaldaw](https://github.com/JIKASSA/terminaldaw)** — prior art for the *Python → OSC → Max for Live → LOM* shape used by `AbletonFullControlTape`.
+- **[mcp](https://github.com/modelcontextprotocol/python-sdk)** (Anthropic, MIT) — the official MCP Python SDK; FastMCP registers all our tools.
+- Plus librosa, scipy, scikit-learn, mido, pretty_midi, python-osc, httpx, pydantic, soundfile, numpy — and optionally sentence-transformers, demucs, audiocraft. Full list in [NOTICE.md](NOTICE.md).
+
+If you fork or redistribute this repo, keep `NOTICE.md` alongside the source so the upstream credits travel with the code.

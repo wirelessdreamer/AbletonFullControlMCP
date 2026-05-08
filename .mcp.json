@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ableton_full_control": {
+      "type": "stdio",
+      "command": "D:/Code/AbletonFullControlMCP/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "ableton_mcp"
+      ]
+    }
+  }
+}
