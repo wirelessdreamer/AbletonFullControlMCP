@@ -1,8 +1,21 @@
-"""Subprocess wrapper around Meta's Demucs for source separation.
+"""Demucs source separation via the Python API.
 
-Demucs is invoked as `python -m demucs ...` so we don't need a CLI shim on
-PATH. We rely on the *current* Python interpreter (`sys.executable`) so the
-user only has to `pip install demucs` into the same venv.
+Uses ``demucs.pretrained.get_model`` + ``demucs.apply.apply_model`` directly,
+and writes stems with ``soundfile`` rather than ``torchaudio.save``. Recent
+``torchaudio`` releases route ``save`` through ``torchcodec``, which on
+Windows requires system FFmpeg shared libs that the project doesn't ship —
+the subprocess-based ``python -m demucs <file>`` invocation breaks at the
+final write step in that environment. Calling the model in-process and
+saving with ``soundfile`` sidesteps the whole stack.
+
+Two other behaviour changes vs. the old subprocess version:
+
+* **GPU when available** — ``apply_model`` runs on CUDA if
+  ``torch.cuda.is_available()`` returns True, else CPU. No flag needed.
+  Users without a GPU just get the slower path automatically.
+* **6-stem default** — the default model is now ``htdemucs_6s`` (drums,
+  bass, other, vocals, guitar, piano). The 4-stem ``htdemucs`` is still
+  available by passing ``model="htdemucs"`` explicitly.
 """
 
 from __future__ import annotations
@@ -10,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +37,7 @@ class DemucsNotInstalled(StemsError):
 
 @dataclass
 class StemFile:
-    name: str  # vocals / drums / bass / other
+    name: str  # vocals/drums/bass/other (htdemucs) + guitar/piano (htdemucs_6s)
     path: str
 
 
@@ -33,19 +45,85 @@ def _demucs_available() -> bool:
     return importlib.util.find_spec("demucs") is not None
 
 
+def _separate_sync(
+    audio_path: str,
+    model_name: str,
+    out_dir: Path,
+) -> list[StemFile]:
+    """Synchronous demucs separation. Heavy imports happen here so that
+    importing this module doesn't drag in torch + librosa for callers that
+    only need the dataclasses or the availability check."""
+    import librosa
+    import numpy as np
+    import soundfile as sf
+    import torch
+    from demucs.apply import apply_model
+    from demucs.pretrained import get_model
+
+    src = Path(audio_path)
+    track_dir = out_dir / model_name / src.stem
+    track_dir.mkdir(parents=True, exist_ok=True)
+
+    # Auto-detect device. CPU is the fallback for any environment without
+    # CUDA torch installed; no opt-in flag required.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    model = get_model(model_name)
+    model.eval()
+
+    # Load audio at the model's native sample rate, force stereo (demucs
+    # expects 2 channels).
+    audio, _ = librosa.load(str(src), sr=model.samplerate, mono=False)
+    if audio.ndim == 1:
+        audio = np.stack([audio, audio])  # mono → stereo
+    elif audio.shape[0] > 2:
+        audio = audio[:2]  # downmix to stereo if multichannel
+    audio_tensor = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
+
+    with torch.no_grad():
+        separated = apply_model(model, audio_tensor, device=device, progress=False)
+    separated = separated[0]  # drop batch dim → (sources, channels, samples)
+
+    stems: list[StemFile] = []
+    for i, name in enumerate(model.sources):
+        stem_audio = separated[i].numpy()  # (channels, samples)
+        out_path = track_dir / f"{name}.wav"
+        sf.write(str(out_path), stem_audio.T, model.samplerate, subtype="PCM_16")
+        stems.append(StemFile(name=name, path=str(out_path)))
+    return stems
+
+
 async def split_stems(
     audio_path: str,
-    model: str = "htdemucs",
+    model: str = "htdemucs_6s",
     out_dir: str | os.PathLike[str] = "data/stems",
-    python_executable: str | None = None,
+    python_executable: str | None = None,  # ignored; kept for backwards compat
 ) -> list[StemFile]:
-    """Split `audio_path` into stems using Demucs.
+    """Split ``audio_path`` into stems using Demucs.
 
-    Demucs writes its outputs to `<out_dir>/<model>/<track_name>/<stem>.wav`.
-    Returns the list of stems it actually produced (`htdemucs` ships
-    vocals/drums/bass/other; `htdemucs_6s` adds piano + guitar).
+    The default model is ``htdemucs_6s`` (6 stems: drums, bass, other,
+    vocals, guitar, piano). Pass ``model="htdemucs"`` for the older
+    4-stem version (drums/bass/other/vocals).
 
-    Raises DemucsNotInstalled if the package can't be found in this venv.
+    Demucs runs on **GPU when available** (``torch.cuda.is_available()``)
+    and falls back to CPU automatically. To enable GPU, install a CUDA
+    torch build into this venv:
+
+        # CUDA 12.6 (stable) — most NVIDIA GPUs
+        pip uninstall -y torch torchaudio
+        pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+        # CUDA 12.8 nightly — required for sm_120 / Blackwell (RTX 50-series)
+        pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+    Demucs writes stems to ``<out_dir>/<model>/<basename>/<stem>.wav``.
+
+    The ``python_executable`` argument is accepted for backwards
+    compatibility but ignored — the new implementation invokes Demucs
+    in-process.
+
+    Raises :class:`DemucsNotInstalled` if the package can't be found in
+    this venv. Raises :class:`StemsError` for any other failure.
     """
     src = Path(audio_path)
     if not src.exists():
@@ -60,36 +138,23 @@ async def split_stems(
             "manual fallback: `pip install demucs>=4.0.1`."
         )
 
-    py = python_executable or sys.executable
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    proc = await asyncio.create_subprocess_exec(
-        py, "-m", "demucs", "-n", model, "-o", str(out), str(src),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise StemsError(
-            f"Demucs failed (exit {proc.returncode}): "
-            f"{stderr.decode(errors='replace')[:2000]}"
+    # Run the synchronous demucs work in a thread executor so we don't
+    # block the event loop.
+    loop = asyncio.get_event_loop()
+    try:
+        stems = await loop.run_in_executor(
+            None, _separate_sync, str(src), model, out
         )
+    except DemucsNotInstalled:
+        raise
+    except StemsError:
+        raise
+    except Exception as exc:
+        raise StemsError(f"Demucs separation failed: {exc!r}") from exc
 
-    track_dir = out / model / src.stem
-    if not track_dir.exists():
-        # Some Demucs versions skip the model dir when only one model exists.
-        candidates = [p for p in out.rglob(src.stem) if p.is_dir()]
-        if not candidates:
-            raise StemsError(
-                f"Demucs did not produce an output directory for {src.stem!r} "
-                f"under {out}. stdout tail: {stdout.decode(errors='replace')[-500:]}"
-            )
-        track_dir = candidates[0]
-
-    stems: list[StemFile] = []
-    for wav in sorted(track_dir.glob("*.wav")):
-        stems.append(StemFile(name=wav.stem, path=str(wav)))
     if not stems:
-        raise StemsError(f"No stem .wav files found in {track_dir}")
+        raise StemsError(f"Demucs produced no stems for {src.name}")
     return stems

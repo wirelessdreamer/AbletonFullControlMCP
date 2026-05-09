@@ -34,7 +34,7 @@ This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server
 | Bounce to wav / stems / mp3 | **yes** (Live Resampling track + libmp3lame, full mix + per-track stems in one pass) | no | no |
 | Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers / TF-IDF fallback) | no | no |
 | AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no |
-| Stem splitting (Demucs) | **yes** (4-stem `htdemucs` + 6-stem `htdemucs_6s`, base install) | no | no |
+| Stem splitting (Demucs) | **yes** (default 6-stem `htdemucs_6s`, fallback 4-stem `htdemucs`; auto GPU when CUDA torch installed) | no | no |
 | Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no |
 | Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a |
 | Auto-installer for clients (Claude Desktop + Code) | **yes** (`install_clients` script) | no | no |
@@ -120,6 +120,27 @@ pip install -e .
 #   pip install -e ".[musicgen]"    # audiocraft for local MusicGen (~4 GB torch+xformers)
 #   pip install -e ".[all-heavy]"   # everything heavy
 ```
+
+#### Optional: GPU acceleration for stem splitting
+
+The default `pip install -e .` pulls **CPU-only** torch (cross-platform, no CUDA toolkit needed). The stem-split path (`stems_split`, `song_make_variations`) **auto-detects GPU at runtime** — if a CUDA torch build is installed, Demucs runs on the GPU; otherwise it falls back to CPU. Typical speedup is 5-10× on a modern NVIDIA card (a 5-min song goes from ~90s on CPU to ~15s on GPU).
+
+To switch to a CUDA torch build:
+
+```powershell
+# CUDA 12.6 (stable) — most NVIDIA GPUs released before 2025
+.\.venv\Scripts\python.exe -m pip uninstall -y torch torchaudio
+.\.venv\Scripts\python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# CUDA 12.8 nightly — required for sm_120 / Blackwell (RTX 50-series)
+.\.venv\Scripts\python.exe -m pip uninstall -y torch torchaudio
+.\.venv\Scripts\python.exe -m pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# Verify
+.\.venv\Scripts\python.exe -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
+```
+
+Both downloads are ~2-3 GB. No code changes needed after install — `stems_split` will pick up the GPU automatically. To go back to CPU torch, uninstall and reinstall without the `--index-url`.
 
 ### 2. Install the Live Remote Scripts
 

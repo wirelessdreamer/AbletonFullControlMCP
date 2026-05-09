@@ -126,15 +126,23 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def stems_split(
         audio_path: str,
-        n_stems: int = 4,
+        n_stems: int = 6,
         model: str | None = None,
     ) -> dict[str, Any]:
         """[Phase 6] Run Demucs to split an audio file into stems.
 
-        ``n_stems=4`` uses ``htdemucs`` and produces drums/bass/other/vocals.
-        ``n_stems=6`` uses ``htdemucs_6s`` and adds guitar + piano.
-        Pass ``model="htdemucs_ft"`` (or any other Demucs model) to override
-        the n_stems default.
+        Defaults to ``n_stems=6`` (``htdemucs_6s``) which produces
+        drums/bass/other/vocals + guitar + piano. The 6-stem split
+        gives real per-instrument output and is preferred for downstream
+        practice-track / boosted-stem workflows. Pass ``n_stems=4`` for
+        the older ``htdemucs`` (drums/bass/other/vocals) if you want a
+        smaller / faster split. Pass ``model="htdemucs_ft"`` (or any
+        other Demucs model name) to override the n_stems default.
+
+        Demucs runs on GPU when available (``torch.cuda.is_available()``)
+        and falls back to CPU automatically. To enable GPU, install a
+        CUDA torch build — see the docstring on
+        ``ableton_mcp.stems.demucs.split_stems`` for the install commands.
 
         Output is written under ``data/stems/<model>/<basename>/<stem>.wav``.
         If demucs isn't installed in this venv, returns a structured error
