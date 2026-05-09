@@ -123,14 +123,28 @@ pip install -e .
 
 ### 2. Install the Live Remote Scripts
 
+#### 2a. Copy the script files into Live's User Library
+
 ```powershell
 python -m ableton_mcp.scripts.install_abletonosc   # transport, tracks, clips, devices, scenes, ...
 python -m ableton_mcp.scripts.install_bridge       # browser, group/freeze/flatten, save, ...
 ```
 
-> **Two Remote Scripts, different ownership.** Step 2 installs *two* Live
-> Remote Scripts and they look the same in Live's Preferences — but they're
-> deliberately split:
+This drops two folders under `Documents\Ableton\User Library\Remote Scripts\` (Windows) or `~/Music/Ableton/User Library/Remote Scripts/` (macOS). Live only scans this directory at startup, so **restart Ableton Live now** if it's open.
+
+#### 2b. Enable BOTH scripts as Control Surfaces in Ableton
+
+This step is required — without it, the MCP server can't talk to Live. After restart:
+
+1. Open Ableton → **Preferences** → **Link, Tempo & MIDI**
+2. Find the **Control Surface** column (six dropdown rows)
+3. In one free row, pick **AbletonOSC** from the dropdown. Leave its Input and Output set to **None**.
+4. In another free row, pick **AbletonFullControlBridge**. Leave Input and Output as **None**.
+5. Close Preferences. Both run side-by-side: AbletonOSC owns UDP 11000/11001, the bridge owns TCP 11002.
+
+If either entry isn't in the Control Surface dropdown, step 2a didn't land — re-run the install script and restart Live. Both must be enabled; the server will time out on roughly 70% of its tools if AbletonOSC is missing, and on browser / group / freeze / save / hot-reload calls if the bridge is missing.
+
+> **Why two scripts, different ownership?**
 >
 > - **AbletonOSC** — third-party project by Daniel Jones (BSD-3-Clause). We
 >   download it unmodified from [its upstream GitHub](https://github.com/ideoforms/AbletonOSC)
@@ -141,12 +155,8 @@ python -m ableton_mcp.scripts.install_bridge       # browser, group/freeze/flatt
 > - **AbletonFullControlBridge** — ours. Fills the gaps AbletonOSC doesn't
 >   cover (browser, group/freeze/flatten, save, session→arrangement, hot
 >   reload).
->
-> Both must be enabled for AbletonFullControlMCP to have its full surface.
 
-In Ableton: **Preferences → Link/Tempo/MIDI → Control Surface** — set two free slots to **AbletonOSC** and **AbletonFullControlBridge**. Both can run side-by-side; AbletonOSC uses UDP 11000/11001, the bridge uses TCP 11002.
-
-The bounce pipeline (`bounce_song`, `bounce_tracks`, `bounce_enabled`) uses Live's built-in **Resampling** input — no extra setup, just install ffmpeg if you want mp3 alongside the wav.
+The bounce pipeline (`bounce_song`, `bounce_tracks`, `bounce_enabled`) uses Live's built-in **Resampling** input — no extra setup beyond the two Control Surfaces above; install ffmpeg if you want mp3 alongside the wav.
 
 ### 3. (Optional) Build the knowledge index
 
