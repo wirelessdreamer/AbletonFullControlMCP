@@ -9,11 +9,23 @@ from mcp.server.fastmcp import FastMCP
 from ..osc_client import get_client
 
 
-def _parse_pairs(args: tuple[Any, ...]) -> dict[int, Any]:
+def _strip_track_id(args: tuple[Any, ...]) -> list[Any]:
+    """AbletonOSC's track replies are shaped ``(track_id, val_0, val_1, ...)``
+    — a flat tuple with the track id leading and one entry per arrangement
+    clip after it. Strip the track id and return the value list.
+
+    For arrangement clips specifically, the count of entries equals the
+    number of clips on the track and the index in the list is the clip's
+    arrangement index. There are NO None placeholders (unlike the session
+    clip-slots reply which uses None for empty slots).
+
+    See ``track.py`` in AbletonOSC for the canonical reply shape:
+        return tuple(clip.length for clip in track.arrangement_clips)
+    wrapped by ``track_callback`` which prepends the track id.
+    """
     if not args:
-        return {}
-    # First element is track_id; remainder is (slot_idx, value) pairs.
-    return {int(args[i]): args[i + 1] for i in range(1, len(args) - 1, 2)}
+        return []
+    return list(args[1:])
 
 
 def register(mcp: FastMCP) -> None:
@@ -24,19 +36,19 @@ def register(mcp: FastMCP) -> None:
         names = await client.request("/live/track/get/arrangement_clips/name", int(track_index))
         lengths = await client.request("/live/track/get/arrangement_clips/length", int(track_index))
         starts = await client.request("/live/track/get/arrangement_clips/start_time", int(track_index))
-        names_m = _parse_pairs(names)
-        lengths_m = _parse_pairs(lengths)
-        starts_m = _parse_pairs(starts)
-        idxs = sorted(set(names_m) | set(lengths_m) | set(starts_m))
+        name_list = _strip_track_id(names)
+        length_list = _strip_track_id(lengths)
+        start_list = _strip_track_id(starts)
+        n = max(len(name_list), len(length_list), len(start_list), 0)
         out: list[dict[str, Any]] = []
-        for i in idxs:
+        for i in range(n):
             out.append(
                 {
                     "track_index": track_index,
                     "arrangement_clip_index": i,
-                    "name": names_m.get(i),
-                    "length_beats": lengths_m.get(i),
-                    "start_time_beats": starts_m.get(i),
+                    "name": name_list[i] if i < len(name_list) else None,
+                    "length_beats": length_list[i] if i < len(length_list) else None,
+                    "start_time_beats": start_list[i] if i < len(start_list) else None,
                 }
             )
         return out
