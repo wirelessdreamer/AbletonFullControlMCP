@@ -92,9 +92,9 @@ If you discover a fact that isn't here, add it. Future-you will thank you.
 
 `/live/track/get/<scalar>` (e.g. mute, name, volume) → `(track_id, value)` — id first, then scalar.
 
-`/live/track/get/clips/name` → `(track_id, slot_idx_0, name_0, slot_idx_1, name_1, ...)` — first arg is the track id, then alternating `(slot_index, value)` pairs for slots that contain a clip. Empty slots are simply absent. Same shape for `/live/track/get/clips/length` and `/live/track/get/clips/color`.
+`/live/track/get/clips/name` → `(track_id, val_slot_0, val_slot_1, ..., val_slot_N)` — first arg is the track id, **NO** interleaved slot indices. AbletonOSC enumerates `track.clip_slots` in order and emits `clip_slot.clip.name` for filled slots and `None` for empty ones, so the list length equals the total slot count and the index in the list is the slot index. Same shape for `/live/track/get/clips/length` and `/live/track/get/clips/color`. (Earlier revisions of this doc incorrectly described an alternating `(slot_idx, value)` pair format — that parser would fail to find any clips. Verified against AbletonOSC `track.py:111-115` 2026-05-09.)
 
-`/live/track/get/arrangement_clips/name` → similar pattern: `(track_id, arr_idx_0, name_0, ...)`. Beware: my first naive parser assumed the leading element was *not* the track_id; that was wrong.
+`/live/track/get/arrangement_clips/name` → `(track_id, name_0, name_1, ..., name_M)` — flat tuple, **no interleaved indices**, **no None placeholders**. AbletonOSC iterates `track.arrangement_clips` directly so the count is the number of existing clips and the index in the list is the clip's arrangement index. Same shape for `/live/track/get/arrangement_clips/length` and `/live/track/get/arrangement_clips/start_time`. (Same warning as above: earlier revisions claimed an alternating-pair format which is wrong. Verified against AbletonOSC `track.py:120-127` 2026-05-09.)
 
 `/live/track/get/devices/name` → `(track_id, name_0, name_1, ...)` — first arg is track id, **NO** indices interleaved (devices are positional, just dump in order).
 

@@ -47,3 +47,7 @@ data/cache/
 
 # AbletonOSC zip cache
 .cache/
+
+# Editor / install-script backup files (git is the source of truth for history)
+*.bak
+*.bak.*

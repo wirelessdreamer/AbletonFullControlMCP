@@ -15,30 +15,38 @@ LAUNCH_MODES = ["Trigger", "Gate", "Toggle", "Repeat"]
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def clip_list(track_index: int) -> list[dict[str, Any]]:
-        """List clips on a track (Session view): slot index, name, length, color."""
+        """List clips on a track (Session view): slot index, name, length, color.
+
+        AbletonOSC's reply for ``/live/track/get/clips/*`` is shaped
+        ``(track_id, val_slot_0, val_slot_1, ..., val_slot_N)`` — a flat
+        tuple with one entry per session clip slot, ``None`` for empty
+        slots (see ``track.py`` in AbletonOSC). Empty slots are filtered
+        out of the result; index in the returned list is the slot index.
+        """
         client = await get_client()
         names = await client.request("/live/track/get/clips/name", int(track_index))
         lengths = await client.request("/live/track/get/clips/length", int(track_index))
         colors = await client.request("/live/track/get/clips/color", int(track_index))
 
-        def parse_pairs(args: tuple[Any, ...]) -> dict[int, Any]:
-            if not args:
-                return {}
-            return {int(args[i]): args[i + 1] for i in range(1, len(args) - 1, 2)}
+        def strip_track_id(args: tuple[Any, ...]) -> list[Any]:
+            return list(args[1:]) if args else []
 
-        names_m = parse_pairs(names)
-        lengths_m = parse_pairs(lengths)
-        colors_m = parse_pairs(colors)
-        all_slots = sorted(set(names_m) | set(lengths_m) | set(colors_m))
+        name_list = strip_track_id(names)
+        length_list = strip_track_id(lengths)
+        color_list = strip_track_id(colors)
+        n = max(len(name_list), len(length_list), len(color_list), 0)
         out: list[dict[str, Any]] = []
-        for slot_idx in all_slots:
+        for slot_idx in range(n):
+            name = name_list[slot_idx] if slot_idx < len(name_list) else None
+            if name is None:
+                continue  # empty slot
             out.append(
                 {
                     "track_index": track_index,
                     "clip_index": slot_idx,
-                    "name": names_m.get(slot_idx),
-                    "length_beats": lengths_m.get(slot_idx),
-                    "color": colors_m.get(slot_idx),
+                    "name": name,
+                    "length_beats": length_list[slot_idx] if slot_idx < len(length_list) else None,
+                    "color": color_list[slot_idx] if slot_idx < len(color_list) else None,
                 }
             )
         return out
