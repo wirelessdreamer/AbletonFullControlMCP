@@ -68,18 +68,23 @@ class _State:
 
 
 async def _arrangement_clip_count(track_index: int) -> int:
-    """Count arrangement clips on a track via OSC.
+    """Count arrangement clips on a track via the bridge (direct LOM).
 
-    Reuses the same /live/track/get/arrangement_clips/length address that
-    ``arrangement_clips_list`` uses, but only counts pairs — cheaper when
-    we don't need names/lengths.
+    AbletonOSC's ``/live/track/get/arrangement_clips/*`` replies are empty
+    for clips that landed after AbletonOSC's listeners were attached
+    (typical of user-dragged-after-startup or programmatic clips). The
+    bridge handler ``clip.list_arrangement_clips`` reads
+    ``track.arrangement_clips`` directly via LOM and is always current.
+
+    See the "Discovered blocker" section of
+    ``~/.claude/plans/next-feature-i-want-expressive-pnueli.md`` for the
+    full investigation.
     """
-    client = await get_client()
-    reply = await client.request(
-        "/live/track/get/arrangement_clips/length", int(track_index)
+    bridge = get_bridge_client()
+    info = await bridge.call(
+        "clip.list_arrangement_clips", track_index=int(track_index)
     )
-    # Reply shape: (track_id, idx_0, len_0, idx_1, len_1, ...). Count pairs.
-    return max(0, (len(reply) - 1) // 2)
+    return len(info.get("clips") or [])
 
 
 async def _num_tracks() -> int:

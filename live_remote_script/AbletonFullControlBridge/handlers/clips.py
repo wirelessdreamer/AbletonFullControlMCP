@@ -34,6 +34,7 @@ EXPORTS = (
     "get_arrangement_notes",
     "set_arrangement_notes",
     "create_arrangement_audio_clip",
+    "list_arrangement_clips",
     "_dir_track",
     "_probe_audio_clip_creation",
 )
@@ -303,10 +304,16 @@ def create_arrangement_audio_clip(c_instance, track_index=None, file_path=None,
         try:
             outcome = fn()
             if isinstance(outcome, tuple) and outcome and outcome[0] == "post_set":
-                new_clip = outcome[1]
+                empty_clip = outcome[1]
+                if empty_clip is None:
+                    # Live silently returned None — record as a failure, not
+                    # a success-with-no-clip.
+                    attempt_errors.append("%s -> returned None" % desc)
+                    continue
                 # Try to populate the freshly-created empty clip.
                 try:
-                    new_clip.file_path = fp
+                    empty_clip.file_path = fp
+                    new_clip = empty_clip
                     method_used = desc
                 except Exception as set_exc:
                     attempt_errors.append("%s -> set file_path: %s: %s" % (
@@ -315,12 +322,18 @@ def create_arrangement_audio_clip(c_instance, track_index=None, file_path=None,
                     # the user's arrangement is worse than failing cleanly.
                     try:
                         if hasattr(track, "delete_clip"):
-                            track.delete_clip(new_clip)
+                            track.delete_clip(empty_clip)
                     except Exception:
                         pass
                     new_clip = None
                     continue
             else:
+                if outcome is None:
+                    # Live's create_audio_clip(weird_args) returns None
+                    # silently rather than raising on some builds. Treat
+                    # as a failed attempt so attempt_errors is informative.
+                    attempt_errors.append("%s -> returned None" % desc)
+                    continue
                 new_clip = outcome
                 method_used = desc
             break
@@ -356,6 +369,36 @@ def create_arrangement_audio_clip(c_instance, track_index=None, file_path=None,
         "is_audio_clip": bool(getattr(new_clip, "is_audio_clip", False)),
         "attempt_errors": attempt_errors,
     }
+
+
+def list_arrangement_clips(c_instance, track_index=None, **_):
+    """Direct-LOM equivalent of ``/live/track/get/arrangement_clips/*``.
+
+    AbletonOSC's ``/live/track/get/arrangement_clips/length`` reply is empty
+    for clips that arrived after AbletonOSC's listeners were attached at
+    Live startup — its arrangement-clips state appears to be cached via
+    listeners and doesn't refresh on user-drag-after-startup or
+    programmatic clip creation. This handler enumerates the clips via
+    direct LOM access (``track.arrangement_clips`` is always live), so the
+    song-flow path (which needs to walk arrangement clips for transpose)
+    is resilient to that upstream caching bug.
+
+    Returns:
+        ``{"track_index": int, "clips": [{clip_index, name, length,
+            start_time, is_midi_clip, is_audio_clip}, ...]}``.
+    """
+    track = _track(int(track_index))
+    out = []
+    for i, clip in enumerate(track.arrangement_clips):
+        out.append({
+            "clip_index": i,
+            "name": getattr(clip, "name", None),
+            "length": float(getattr(clip, "length", 0.0)),
+            "start_time": float(getattr(clip, "start_time", 0.0)),
+            "is_midi_clip": bool(getattr(clip, "is_midi_clip", False)),
+            "is_audio_clip": bool(getattr(clip, "is_audio_clip", False)),
+        })
+    return {"track_index": int(track_index), "clips": out}
 
 
 def _probe_audio_clip_creation(c_instance, track_index=0, **_):
