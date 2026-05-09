@@ -179,6 +179,105 @@ def test_make_variations_empty_list_errors() -> None:
     assert out["status"] == "error"
 
 
+def test_make_variations_practice_pack_count_for_6_stem(tmp_path: Path) -> None:
+    """6-stem split, practice_pack mode → 1 (no_vocals) + 5 instrument stems
+    × 2 variants (with/without vocals) = 11 wavs. Vocals stem gets no boost
+    track of its own."""
+    stems = _six_stems(tmp_path)  # drums/bass/other/vocals/guitar/piano
+    out_dir = tmp_path / "pp_out"
+    result = make_variations(stems, out_dir,
+                             output_set="practice_pack", encode_mp3=False)
+    assert result["status"] == "ok"
+    assert result["output_set"] == "practice_pack"
+    assert result["n_variations"] == 11
+    labels = sorted(v["label"] for v in result["variations"])
+    expected = sorted([
+        "no_vocals",
+        "drums_boost_no_vocals", "drums_boost_with_vocals",
+        "bass_boost_no_vocals", "bass_boost_with_vocals",
+        "other_boost_no_vocals", "other_boost_with_vocals",
+        "guitar_boost_no_vocals", "guitar_boost_with_vocals",
+        "piano_boost_no_vocals", "piano_boost_with_vocals",
+    ])
+    assert labels == expected
+
+
+def test_make_variations_practice_pack_writes_files(tmp_path: Path) -> None:
+    stems = _six_stems(tmp_path)
+    out_dir = tmp_path / "pp_files"
+    result = make_variations(stems, out_dir,
+                             output_set="practice_pack", encode_mp3=False)
+    for v in result["variations"]:
+        assert Path(v["wav_path"]).exists(), f"missing wav: {v['wav_path']}"
+
+
+def test_make_variations_practice_pack_name_prefix(tmp_path: Path) -> None:
+    """name_prefix should land on every output filename so multiple songs
+    can share an output dir without collisions."""
+    stems = _six_stems(tmp_path)
+    out_dir = tmp_path / "pp_prefix"
+    result = make_variations(
+        stems, out_dir,
+        output_set="practice_pack", name_prefix="Reasons - ",
+        encode_mp3=False,
+    )
+    # Prefix is prepended verbatim (preserved as-is, NOT run through
+    # _safe_filename — the caller chose the format on purpose).
+    for v in result["variations"]:
+        assert Path(v["wav_path"]).name.startswith("Reasons - "), (
+            f"missing prefix: {v['wav_path']}"
+        )
+
+
+def test_make_variations_practice_pack_errors_when_only_vocals(tmp_path: Path) -> None:
+    """practice_pack requires at least one non-vocal stem (a no_vocals mix
+    of nothing isn't useful)."""
+    stems = [
+        {"name": "vocals", "path": str(tmp_path / "vocals.wav")},
+    ]
+    _write_synthetic_stem(Path(stems[0]["path"]), freq=400.0)
+    out = make_variations(stems, tmp_path / "v",
+                          output_set="practice_pack", encode_mp3=False)
+    assert out["status"] == "error"
+    assert "non-vocal" in out["error"]
+
+
+def test_make_variations_unknown_output_set_errors(tmp_path: Path) -> None:
+    stems = _six_stems(tmp_path)
+    out = make_variations(stems, tmp_path / "v",
+                          output_set="bogus_mode", encode_mp3=False)
+    assert out["status"] == "error"
+    assert "output_set" in out["error"]
+
+
+def test_make_variations_practice_pack_skips_vocal_stems_with_substring_match(
+    tmp_path: Path,
+) -> None:
+    """Stems named 'Backing Vocals' / 'Lead Vocal' should be classified as
+    vocals (substring match) and not get their own boost tracks."""
+    names = ["drums", "bass", "guitar", "Lead Vocals", "Backing Vocals"]
+    stems = []
+    for i, name in enumerate(names):
+        p = tmp_path / f"{name.replace(' ', '_')}.wav"
+        _write_synthetic_stem(p, freq=200.0 + 50 * i)
+        stems.append({"name": name, "path": str(p)})
+    result = make_variations(stems, tmp_path / "pp_subst",
+                             output_set="practice_pack", encode_mp3=False)
+    assert result["status"] == "ok"
+    # 1 no_vocals + 3 non-vocal stems × 2 = 7
+    assert result["n_variations"] == 7
+    labels = {v["label"] for v in result["variations"]}
+    # No boost track should start with the name of a vocal stem. (Can't match
+    # on substring "vocal" alone — the variant suffix "_no_vocals" /
+    # "_with_vocals" contains it by design.)
+    vocal_stem_names = ["Lead Vocals", "Backing Vocals"]
+    for lbl in labels:
+        for vsn in vocal_stem_names:
+            assert not lbl.startswith(f"{vsn}_boost_"), (
+                f"vocal stem {vsn!r} got its own boost track: {lbl}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # transpose_song — orchestration with mocked bridge + OSC
 # ---------------------------------------------------------------------------

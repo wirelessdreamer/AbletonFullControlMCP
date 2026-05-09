@@ -92,29 +92,51 @@ def register(mcp: FastMCP) -> None:
         output_dir: str,
         boost_db: float = 6.0,
         attenuation_db: float = -3.0,
+        output_set: str = "remix",
+        name_prefix: str = "",
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
     ) -> dict[str, Any]:
-        """Produce instrument-up remixes from a stem set (offline, fast).
+        """Produce instrument-up remixes (or practice-pack tracks) from a stem set.
 
-        Pass the ``stems`` list returned by ``stems_split`` directly. The
-        tool produces:
+        Pass the ``stems`` list returned by ``stems_split`` directly.
+
+        ``output_set="remix"`` (default) produces the conversational
+        song-flow shape:
 
         - ``original.wav``     — sum at unity gain (sanity check)
         - ``instrumental.wav`` — sum without the vocals stem
         - ``<stem>_up.wav``    — full mix with one stem at +``boost_db`` and
                                  the rest at ``attenuation_db``. One file
-                                 per stem.
+                                 per stem (vocals included).
 
-        With a 6-stem htdemucs_6s split (drums/bass/other/vocals/guitar/
-        piano) you get 8 wavs total. Pure file-on-disk math — no Live, no
-        realtime. mp3 encoding is opt-in and best-effort.
+        With a 6-stem htdemucs_6s split that's 8 wavs.
+
+        ``output_set="practice_pack"`` produces practice-track shape with
+        two variants per non-vocal instrument (so a player can rehearse
+        with or without the singer's part audible):
+
+        - ``no_vocals.wav``                    — instrumental backing
+        - ``<stem>_boost_no_vocals.wav``       — focal +boost, others -duck,
+                                                  vocals dropped
+        - ``<stem>_boost_with_vocals.wav``     — same focal/non-vocal balance
+                                                  but with vocals at unity
+
+        With a 6-stem split (5 instrument stems + 1 vocals) that's 11 wavs.
+
+        ``name_prefix`` is prepended to every output filename — useful for
+        batching multiple songs into one directory (e.g. ``"Reasons - "``).
+
+        Pure file-on-disk math — no Live, no realtime. mp3 encoding is
+        opt-in and best-effort.
         """
         return make_variations(
             stems,
             output_dir,
             boost_db=boost_db,
             attenuation_db=attenuation_db,
+            output_set=output_set,
+            name_prefix=name_prefix,
             encode_mp3=encode_mp3,
             bitrate_kbps=bitrate_kbps,
         )
