@@ -79,7 +79,7 @@ These are NOT installed by default. Install only via `pip install -e ".[<extra>]
 |---|---|---|---|---|
 | [`sentence-transformers`](https://www.sbert.net/) | Nils Reimers / UKPLab | Apache-2.0 | `[knowledge]` | Embedding the Ableton manual + Cookbook for RAG. Pulls torch (~2 GB). |
 | [`sqlite-vec`](https://github.com/asg017/sqlite-vec) | Alex Garcia | Apache-2.0 / MIT | `[knowledge]` | Optional sqlite extension for vector search; we fall back to brute-force cosine if not present. |
-| [`demucs`](https://github.com/facebookresearch/demucs) | Meta AI Research | MIT | `[stems]` | Stem splitting (vocals/drums/bass/other) for the Suno-import pipeline. Pulls torch + torchaudio (~2 GB). |
+| [`demucs`](https://github.com/facebookresearch/demucs) | Meta AI Research | MIT | base | 4-stem (`htdemucs`) and 6-stem (`htdemucs_6s`) source separation for `stems_split` and the song-flow variations path. Pulls torch + torchaudio (~2 GB). |
 | [`audiocraft`](https://github.com/facebookresearch/audiocraft) | Meta AI Research | MIT | `[musicgen]` | Local MusicGen generation. Pulls torch + transformers + xformers (~4 GB). |
 
 ## External services (configured via API key, never bundled)

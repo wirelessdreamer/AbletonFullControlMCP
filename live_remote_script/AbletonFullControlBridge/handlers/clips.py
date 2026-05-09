@@ -27,7 +27,15 @@ EXPORTS = (
     "reverse",
     "duplicate_to_arrangement",
     "arrangement_clip_info",
+    "get_arrangement_pitch_state",
+    "set_arrangement_warp",
+    "set_arrangement_warp_mode",
+    "set_arrangement_pitch",
+    "get_arrangement_notes",
+    "set_arrangement_notes",
+    "create_arrangement_audio_clip",
     "_dir_track",
+    "_probe_audio_clip_creation",
 )
 
 
@@ -57,6 +65,337 @@ def arrangement_clip_info(c_instance, track_index=None, clip_index=0, **_):
         "end_time": float(getattr(clip, "end_time", 0.0)),
         "length": float(getattr(clip, "length", 0.0)),
         "is_audio_clip": bool(getattr(clip, "is_audio_clip", False)),
+    }
+
+
+def _arrangement_clip(track_index, clip_index):
+    """Resolve `(track_index, clip_index)` to a Clip on the arrangement timeline.
+
+    Mirrors `_clip` (which targets the session clip slot) for the arrangement
+    case. The new song-flow handlers below all use this.
+    """
+    track = _track(int(track_index))
+    clips = list(track.arrangement_clips)
+    ci = int(clip_index)
+    if ci < 0 or ci >= len(clips):
+        raise ValueError(
+            "clip_index %d out of range; track has %d arrangement clips"
+            % (ci, len(clips))
+        )
+    return clips[ci]
+
+
+def get_arrangement_pitch_state(c_instance, track_index=None, clip_index=0, **_):
+    """Snapshot warp + pitch + clip-type state for an arrangement clip.
+
+    Used by the song-flow transpose path before mutating warp/pitch so the
+    original state can be restored after the bounce. Audio-only fields return
+    None on a MIDI clip (LOM does not expose warp/pitch on MIDI clips).
+    """
+    clip = _arrangement_clip(track_index, clip_index)
+    is_midi = bool(getattr(clip, "is_midi_clip", False))
+    return {
+        "track_index": int(track_index),
+        "clip_index": int(clip_index),
+        "is_midi_clip": is_midi,
+        "warping": None if is_midi else bool(getattr(clip, "warping", False)),
+        "warp_mode": None if is_midi else int(getattr(clip, "warp_mode", 0) or 0),
+        "pitch_coarse": None if is_midi else int(getattr(clip, "pitch_coarse", 0) or 0),
+        "pitch_fine": None if is_midi else int(getattr(clip, "pitch_fine", 0) or 0),
+    }
+
+
+def set_arrangement_warp(c_instance, track_index=None, clip_index=0, value=True, **_):
+    """Toggle warping on an audio arrangement clip."""
+    clip = _arrangement_clip(track_index, clip_index)
+    if bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("warp is audio-only; clip is MIDI")
+    clip.warping = bool(value)
+    return {"track_index": int(track_index), "clip_index": int(clip_index),
+            "warping": bool(clip.warping)}
+
+
+def set_arrangement_warp_mode(c_instance, track_index=None, clip_index=0, mode=5, **_):
+    """Set warp mode on an audio arrangement clip.
+
+    Mode integers (Live 11): 0=Beats, 1=Tones, 2=Texture, 3=Re-Pitch,
+    4=Complex, 5=Complex Pro. The transpose flow uses 5 (Complex Pro) for
+    pitch-preserving high-quality transposition.
+    """
+    clip = _arrangement_clip(track_index, clip_index)
+    if bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("warp_mode is audio-only; clip is MIDI")
+    clip.warp_mode = int(mode)
+    return {"track_index": int(track_index), "clip_index": int(clip_index),
+            "warp_mode": int(clip.warp_mode)}
+
+
+def set_arrangement_pitch(c_instance, track_index=None, clip_index=0,
+                          coarse=0, fine=0, **_):
+    """Set pitch_coarse (semitones) and pitch_fine (cents) on an audio clip.
+
+    LOM enforces pitch_coarse in [-48, 48] and pitch_fine in [-50, 50]; values
+    outside that range raise. Caller is expected to clamp.
+    """
+    clip = _arrangement_clip(track_index, clip_index)
+    if bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("pitch is audio-only; clip is MIDI")
+    clip.pitch_coarse = int(coarse)
+    clip.pitch_fine = int(fine)
+    return {"track_index": int(track_index), "clip_index": int(clip_index),
+            "pitch_coarse": int(clip.pitch_coarse),
+            "pitch_fine": int(clip.pitch_fine)}
+
+
+def get_arrangement_notes(c_instance, track_index=None, clip_index=0, **_):
+    """Read all notes from a MIDI arrangement clip.
+
+    Returns a list of {pitch, start, duration, velocity, mute} dicts. Uses
+    the same fallback chain (`get_notes_extended` → `get_notes`) as the
+    session-clip note read path in `duplicate_to_arrangement`.
+    """
+    clip = _arrangement_clip(track_index, clip_index)
+    if not bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("notes are MIDI-only; clip is audio")
+    length = float(getattr(clip, "length", 0.0))
+    rows = []
+    read_err = None
+    try:
+        for n in clip.get_notes_extended(0, 128, 0.0, length):
+            rows.append({
+                "pitch": int(n.pitch),
+                "start": float(n.start_time),
+                "duration": float(n.duration),
+                "velocity": int(n.velocity),
+                "mute": bool(n.mute),
+            })
+        return {"track_index": int(track_index), "clip_index": int(clip_index),
+                "length": length, "notes": rows, "via": "get_notes_extended"}
+    except (AttributeError, TypeError) as exc:
+        read_err = exc
+    try:
+        for (p, t, d, v, m) in clip.get_notes(0.0, 0, length, 128):
+            rows.append({
+                "pitch": int(p), "start": float(t), "duration": float(d),
+                "velocity": int(v), "mute": bool(m),
+            })
+        return {"track_index": int(track_index), "clip_index": int(clip_index),
+                "length": length, "notes": rows, "via": "get_notes"}
+    except Exception as exc:
+        raise RuntimeError(
+            "could not read notes: %r (extended err: %r)" % (exc, read_err)
+        )
+
+
+def set_arrangement_notes(c_instance, track_index=None, clip_index=0,
+                          notes=None, **_):
+    """Replace all notes on a MIDI arrangement clip.
+
+    `notes` is a list of {pitch, start, duration, velocity, mute} dicts (the
+    same shape `get_arrangement_notes` returns). The clip's existing notes
+    are removed first; then the new notes are written via `add_new_notes`
+    (Live 11+) with `set_notes` as fallback. Returns the count written.
+    """
+    clip = _arrangement_clip(track_index, clip_index)
+    if not bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("notes are MIDI-only; clip is audio")
+    notes = notes or []
+    length = float(getattr(clip, "length", 0.0))
+
+    rows = tuple(
+        (int(n["pitch"]), float(n["start"]), float(n["duration"]),
+         int(n["velocity"]), bool(n.get("mute", False)))
+        for n in notes
+    )
+
+    # Wipe existing notes. `remove_notes_extended` covers all pitches/time.
+    if hasattr(clip, "remove_notes_extended"):
+        try:
+            clip.remove_notes_extended(0, 128, 0.0, max(length, 0.0))
+        except Exception:
+            pass
+    elif hasattr(clip, "remove_notes"):
+        try:
+            clip.remove_notes(0.0, 0, max(length, 0.0), 128)
+        except Exception:
+            pass
+
+    write_err = None
+    written = False
+    if hasattr(clip, "add_new_notes"):
+        try:
+            clip.add_new_notes(rows)
+            written = True
+        except Exception as exc:
+            write_err = "add_new_notes: %r" % (exc,)
+    if not written and hasattr(clip, "set_notes"):
+        try:
+            clip.set_notes(rows)
+            written = True
+        except Exception as exc:
+            write_err = (write_err or "") + " | set_notes: %r" % (exc,)
+    if not written:
+        raise RuntimeError("could not write notes: %s" % write_err)
+
+    return {"track_index": int(track_index), "clip_index": int(clip_index),
+            "notes_written": len(rows)}
+
+
+def create_arrangement_audio_clip(c_instance, track_index=None, file_path=None,
+                                   position=0.0, length=None, **_):
+    """Create an arrangement audio clip on a track and (try to) load a wav.
+
+    Live 11.3.43's documented surface is ``Track.create_audio_clip(name,
+    position)`` which creates an empty audio clip — the LOM doesn't expose
+    a single-call "drop wav into arrangement". This handler probes a few
+    plausible signatures + a post-create ``file_path`` setter, returning
+    rich diagnostics on failure so the caller can route (e.g. fall back
+    to "drag manually").
+
+    On success: returns ``{loaded: True, via: <method>, clip_file_path,
+    track_index, file_path, position, length}``.
+
+    On failure: returns ``{loaded: False, supported: False, attempt_errors,
+    workaround}``. NEVER raises for a "couldn't load" case — that belongs
+    in the response so the higher layer can decide.
+    """
+    import os
+    track = _track(int(track_index))
+    fp = str(file_path or "")
+    pos = float(position)
+    if not fp or not os.path.exists(fp):
+        raise ValueError("file_path missing or does not exist: %r" % fp)
+
+    if not getattr(track, "create_audio_clip", None):
+        return {
+            "track_index": int(track_index),
+            "file_path": fp,
+            "loaded": False, "supported": False,
+            "workaround": "Track.create_audio_clip not available in this Live build; drag the wav onto the arrangement manually.",
+        }
+
+    # Plausible call shapes, ordered by hypothesis strength. The doc'd
+    # signature takes (name, position) — but Live builds vary; we try a
+    # few interpretations + an optional length hint.
+    candidates = []
+    if length is not None:
+        end = pos + float(length)
+        candidates.extend([
+            ("create_audio_clip(file_path, position, end)",
+             lambda: track.create_audio_clip(fp, pos, end)),
+        ])
+    candidates.extend([
+        ("create_audio_clip(file_path, position)",
+         lambda: track.create_audio_clip(fp, pos)),
+        ("create_audio_clip(file_path)",
+         lambda: track.create_audio_clip(fp)),
+    ])
+    # Speculative: build with name=basename then attempt to set file_path.
+    candidates.extend([
+        ("create_audio_clip(basename, position) + clip.file_path = fp",
+         lambda: ("post_set", track.create_audio_clip(os.path.basename(fp), pos))),
+    ])
+
+    attempt_errors = []
+    new_clip = None
+    method_used = None
+    for desc, fn in candidates:
+        try:
+            outcome = fn()
+            if isinstance(outcome, tuple) and outcome and outcome[0] == "post_set":
+                new_clip = outcome[1]
+                # Try to populate the freshly-created empty clip.
+                try:
+                    new_clip.file_path = fp
+                    method_used = desc
+                except Exception as set_exc:
+                    attempt_errors.append("%s -> set file_path: %s: %s" % (
+                        desc, type(set_exc).__name__, set_exc))
+                    # Clean up the empty clip — leaving an empty clip on
+                    # the user's arrangement is worse than failing cleanly.
+                    try:
+                        if hasattr(track, "delete_clip"):
+                            track.delete_clip(new_clip)
+                    except Exception:
+                        pass
+                    new_clip = None
+                    continue
+            else:
+                new_clip = outcome
+                method_used = desc
+            break
+        except Exception as exc:
+            attempt_errors.append("%s -> %s: %s" % (desc, type(exc).__name__, exc))
+            continue
+
+    if new_clip is None:
+        return {
+            "track_index": int(track_index),
+            "file_path": fp,
+            "position": pos,
+            "loaded": False, "supported": False,
+            "attempt_errors": attempt_errors,
+            "workaround": (
+                "Live 11's LOM doesn't accept this on your build. "
+                "Drag the wav onto the arrangement timeline manually."
+            ),
+        }
+
+    actual = getattr(new_clip, "file_path", None)
+    looks_loaded = bool(actual) and os.path.exists(actual)
+    return {
+        "track_index": int(track_index),
+        "file_path": fp,
+        "position": pos,
+        "length": float(getattr(new_clip, "length", 0.0) or 0.0),
+        "loaded": looks_loaded,
+        "supported": True,
+        "via": method_used,
+        "clip_file_path": actual,
+        "name": getattr(new_clip, "name", None),
+        "is_audio_clip": bool(getattr(new_clip, "is_audio_clip", False)),
+        "attempt_errors": attempt_errors,
+    }
+
+
+def _probe_audio_clip_creation(c_instance, track_index=0, **_):
+    """Diagnostic: dump every method on Track + Clip whose name plausibly
+    relates to audio-clip creation or sample-loading.
+
+    Read-only (creates no state). Useful for figuring out, on a real Live
+    build, what signature variants ``create_arrangement_audio_clip``
+    should add to its candidates list. Run via the bridge's `system.reload`
+    or directly from a debug shell inside Live.
+    """
+    track = _track(int(track_index))
+    pub = lambda obj: sorted([m for m in dir(obj) if not m.startswith("_")])
+
+    def filtered(obj):
+        return [
+            m for m in pub(obj)
+            if any(k in m.lower() for k in (
+                "audio", "clip", "sample", "arrangement", "load", "create", "file_path",
+            ))
+        ]
+
+    sample_clip = None
+    try:
+        for c in track.arrangement_clips:
+            if getattr(c, "is_audio_clip", False):
+                sample_clip = c
+                break
+    except Exception:
+        pass
+
+    return {
+        "track_methods": filtered(track),
+        "track_clip_creation_specifics": [
+            m for m in pub(track) if "create" in m.lower() and "clip" in m.lower()
+        ],
+        "sample_audio_clip_attrs": filtered(sample_clip) if sample_clip is not None else None,
+        "sample_audio_clip_file_path": (
+            getattr(sample_clip, "file_path", None) if sample_clip is not None else None
+        ),
     }
 
 

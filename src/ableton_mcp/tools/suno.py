@@ -124,13 +124,32 @@ def register(mcp: FastMCP) -> None:
         return {"status": "ok", **_result_to_dict(result)}
 
     @mcp.tool()
-    async def stems_split(audio_path: str, model: str = "htdemucs") -> dict[str, Any]:
-        """[Phase 6] Run Demucs to split an audio file into stems (vocals/drums/bass/other).
+    async def stems_split(
+        audio_path: str,
+        n_stems: int = 4,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        """[Phase 6] Run Demucs to split an audio file into stems.
 
-        Output is written under `data/stems/<model>/<basename>/<stem>.wav`.
+        ``n_stems=4`` uses ``htdemucs`` and produces drums/bass/other/vocals.
+        ``n_stems=6`` uses ``htdemucs_6s`` and adds guitar + piano.
+        Pass ``model="htdemucs_ft"`` (or any other Demucs model) to override
+        the n_stems default.
+
+        Output is written under ``data/stems/<model>/<basename>/<stem>.wav``.
         If demucs isn't installed in this venv, returns a structured error
         with the pip install hint.
         """
+        if model is None:
+            if int(n_stems) == 4:
+                model = "htdemucs"
+            elif int(n_stems) == 6:
+                model = "htdemucs_6s"
+            else:
+                return {
+                    "status": "error",
+                    "error": f"n_stems must be 4 or 6 (got {n_stems}); pass an explicit model= for other Demucs variants",
+                }
         try:
             stems = await stems_demucs.split_stems(audio_path, model=model)
         except stems_demucs.DemucsNotInstalled as exc:
@@ -140,6 +159,7 @@ def register(mcp: FastMCP) -> None:
         return {
             "status": "ok",
             "model": model,
+            "n_stems": int(n_stems) if model in ("htdemucs", "htdemucs_6s") else len(stems),
             "audio_path": audio_path,
             "stems": [{"name": s.name, "path": s.path} for s in stems],
         }

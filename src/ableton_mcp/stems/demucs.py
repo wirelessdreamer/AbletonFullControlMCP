@@ -53,8 +53,11 @@ async def split_stems(
 
     if not _demucs_available():
         raise DemucsNotInstalled(
-            "Demucs is not installed in this environment. Install with "
-            "`pip install demucs` (heavy: pulls torch + torchaudio)."
+            "Demucs is missing from this venv even though it's a base "
+            "dependency. The venv probably predates the dependency change "
+            "— rerun `pip install -e .` from the project root to pull it "
+            "(adds torch + torchaudio, ~2 GB). If the install fails, "
+            "manual fallback: `pip install demucs>=4.0.1`."
         )
 
     py = python_executable or sys.executable

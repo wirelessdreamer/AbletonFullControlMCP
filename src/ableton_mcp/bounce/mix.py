@@ -24,6 +24,7 @@ def mix_stems_to_master(
     normalize: bool = True,
     headroom_db: float = 0.1,
     target_samplerate: int | None = None,
+    gains_db: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Sum N stem WAVs into one mix WAV.
 
@@ -36,12 +37,20 @@ def mix_stems_to_master(
                    If False, you keep the raw sum (which may clip).
         headroom_db: dB of headroom under 0 dBFS when normalising.
         target_samplerate: if set, asserts all stems match this rate.
+        gains_db: optional per-stem gain in dB applied before summing.
+                  Length must equal len(stem_paths). Used by the song-flow
+                  variations path to produce instrument-up remixes
+                  (focal stem +6, others -3, etc.). None = unity gain.
 
     Returns dict with output info (path, samplerate, num_frames, peak_dbfs,
     num_stems_summed, channels).
     """
     if not stem_paths:
         raise ValueError("stem_paths is empty")
+    if gains_db is not None and len(gains_db) != len(stem_paths):
+        raise ValueError(
+            f"gains_db length {len(gains_db)} must match stem_paths length {len(stem_paths)}"
+        )
     inputs: list[tuple[np.ndarray, int]] = []
     for p in stem_paths:
         path = Path(p)
@@ -61,12 +70,14 @@ def mix_stems_to_master(
     max_len = max(d.shape[0] for d, _ in inputs)
     max_ch = max(d.shape[1] for d, _ in inputs)
     mix = np.zeros((max_len, max_ch), dtype=np.float32)
-    for d, _ in inputs:
+    for i, (d, _) in enumerate(inputs):
         # Broadcast mono to stereo if needed.
         if d.shape[1] == 1 and max_ch == 2:
             d = np.repeat(d, 2, axis=1)
         elif d.shape[1] == 2 and max_ch == 1:
             d = d.mean(axis=1, keepdims=True)
+        if gains_db is not None:
+            d = d * np.float32(10.0 ** (float(gains_db[i]) / 20.0))
         mix[: d.shape[0]] += d
 
     peak = float(np.max(np.abs(mix)) or 1e-12)
