@@ -31,6 +31,7 @@ from .tools import (
     scenes,
     semantics,
     sound_design,
+    song_flow,
     sound_modeling,
     sound_shaping,
     structure,
@@ -99,6 +100,8 @@ def build_server() -> FastMCP:
     structure.register(mcp)
     # Sound design — per-device curated rules: NL descriptor → which knobs.
     sound_design.register(mcp)
+    # Song flow — analyze, transpose, instrument-up variations, bulk import.
+    song_flow.register(mcp)
 
     return mcp
 

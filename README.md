@@ -34,7 +34,7 @@ This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server
 | Bounce to wav / stems / mp3 | **yes** (Live Resampling track + libmp3lame, full mix + per-track stems in one pass) | no | no |
 | Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers / TF-IDF fallback) | no | no |
 | AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no |
-| Stem splitting (Demucs) | **yes** (optional `[stems]` extra) | no | no |
+| Stem splitting (Demucs) | **yes** (4-stem `htdemucs` + 6-stem `htdemucs_6s`, base install) | no | no |
 | Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no |
 | Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a |
 | Auto-installer for clients (Claude Desktop + Code) | **yes** (`install_clients` script) | no | no |
@@ -76,7 +76,8 @@ So we built the layers a musician actually needs above all of those:
 7. **An NL shaping engine** (`shaping/`) and a probe-based sound-modeling pipeline (`sound/`) for matching reference audio.
 8. **An inventory tool** (`inventory/`) that walks the user's installed-instrument library and writes a manifest.
 9. **A bounce pipeline** (`bounce/`) — wav + mp3 (libmp3lame via ffmpeg), full mix and per-track stems, via Live's built-in Resampling input. One playback pass captures every requested track in parallel; no Max for Live or loopback driver required.
-10. **A knowledge RAG layer** (`knowledge/`) over the Ableton manual + Cookbook for grounded how-to answers.
+10. **A conversational song-flow** (`song_flow/`) — one-shot analyze/transpose/stem/variations over the active arrangement. *"transpose to F# and create all track variations"* chains `song_analyze` → `song_transpose` (per-clip Complex Pro warp + pitch shift, snapshot/restore) → `stems_split(n_stems=6)` → `song_make_variations` (instrument-up remixes + instrumental) → `song_import_variations_to_live`. The LLM client orchestrates the chain — no monolithic pipeline tool.
+11. **A knowledge RAG layer** (`knowledge/`) over the Ableton manual + Cookbook for grounded how-to answers.
 
 Net result: 200+ tools that the LLM picks across as the conversation moves between "what's loaded?", "tweak this knob", "extend this section", and "render the result". You can have the entire conversation in producer's language; we translate to OSC + LOM behind the scenes.
 
@@ -111,10 +112,11 @@ Net result: 200+ tools that the LLM picks across as the conversation moves betwe
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
+# First install pulls demucs + torch (~2 GB) because the song-flow path
+# (stem split, instrumental, instrument-up variations) depends on it.
 
-# Optional extras (each is heavy; install only what you need):
+# Optional extras (each is additional heavy; install only what you need):
 #   pip install -e ".[knowledge]"   # sentence-transformers + sqlite-vec for the manual RAG
-#   pip install -e ".[stems]"       # demucs for stem splitting (~2 GB torch)
 #   pip install -e ".[musicgen]"    # audiocraft for local MusicGen (~4 GB torch+xformers)
 #   pip install -e ".[all-heavy]"   # everything heavy
 ```
@@ -206,6 +208,6 @@ AbletonFullControlMCP stands on a stack of open-source work. **[NOTICE.md](NOTIC
 - **[Simon-Kansara/ableton-live-mcp-server](https://github.com/Simon-Kansara/ableton-live-mcp-server)** — also sits on AbletonOSC; useful sibling project. Their handlers' shape informed ours where they overlap.
 - **[ideoforms/pylive](https://github.com/ideoforms/pylive)** — Python wrapper for AbletonOSC; informs how we structured the async OSC client (FIFO correlation, listener queues).
 - **[mcp](https://github.com/modelcontextprotocol/python-sdk)** (Anthropic, MIT) — the official MCP Python SDK; FastMCP registers all our tools.
-- Plus librosa, scipy, scikit-learn, mido, pretty_midi, python-osc, httpx, pydantic, soundfile, numpy — and optionally sentence-transformers, demucs, audiocraft. Full list in [NOTICE.md](NOTICE.md).
+- Plus librosa, scipy, scikit-learn, mido, pretty_midi, python-osc, httpx, pydantic, soundfile, numpy, demucs (+ torch, for the song-flow stem-split path) — and optionally sentence-transformers, audiocraft. Full list in [NOTICE.md](NOTICE.md).
 
 If you fork or redistribute this repo, keep `NOTICE.md` alongside the source so the upstream credits travel with the code.

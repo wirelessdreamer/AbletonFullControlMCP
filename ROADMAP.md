@@ -4,7 +4,7 @@ Six phases. Each ships a usable surface; later phases stack on earlier ones.
 
 > Project name: AbletonFullControlMCP. Python module: `ableton_mcp` (kept short — same pattern as scikit-learn → sklearn).
 
-**Status as of 2026-05-08:** ~190 tools across 25 categories. Phases 1, 3, 4, 6 real. **Sound-understanding stack** — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process bench, 44-preset library with cluster discovery — all ship and validate end-to-end. **Inventory tooling** — bulk browser scan + per-instrument schema introspection + manifest. **Bounce pipeline** — `bounce_song`, `bounce_tracks`, `bounce_enabled` capture wav (+ optional mp3) using Live's built-in Resampling input; one playback pass captures every requested track in parallel. The earlier Max-for-Live "tape" capture device was removed in favour of this path.
+**Status as of 2026-05-08:** ~218 tools across 26 categories. Phases 1, 3, 4, 6, 7 real. **Sound-understanding stack** — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process bench, 44-preset library with cluster discovery — all ship and validate end-to-end. **Inventory tooling** — bulk browser scan + per-instrument schema introspection + manifest. **Bounce pipeline** — `bounce_song`, `bounce_tracks`, `bounce_enabled` capture wav (+ optional mp3) using Live's built-in Resampling input; one playback pass captures every requested track in parallel. The earlier Max-for-Live "tape" capture device was removed in favour of this path. **Conversational song-flow** — `song_analyze` / `song_transpose` (Complex Pro per-clip with snapshot-restore) / `song_make_variations` / `song_import_variations_to_live` chain end-to-end so a producer can say "transpose this to F# and create all track variations" and the LLM client orchestrates the rest.
 
 ---
 
@@ -97,11 +97,21 @@ Goal: generate full songs externally, slice into stems, integrate as Live clips 
 - [x] **Suno adapter** — `SUNO_API_KEY` env; httpx-based, mockable for tests
 - [x] **MusicGen adapter** — local audiocraft via subprocess (optional `[musicgen]` extra)
 - [x] **Stable Audio adapter** — Stability AI v2beta; `STABLE_AUDIO_API_KEY` env
-- [x] **Demucs stem split** — `stems_split(audio_path, model="htdemucs")` (optional `[stems]` extra)
+- [x] **Demucs stem split** — `stems_split(audio_path, n_stems=4|6)` (base install — demucs is required because every conversational song-flow request depends on it). 6-stem `htdemucs_6s` adds guitar + piano channels.
 - [x] **Stems → tracks** — `stems_import_to_live` creates one fresh audio track per stem at project tempo
-- [ ] **Final wav-into-clip import** — calls `browser_load_sample` (already shipped via Phase 2 bridge); loop wiring is `for stem in result.tracks: browser_load_sample(stem.path, stem.track_index, 0)` — small follow-up to wrap as one tool
+- [x] **Final wav-into-clip import** — `song_import_variations_to_live` does this in a loop via `browser.load_sample` for any list of `{label, wav_path}` entries; covers the stem-import case as well as song-flow variations
 - [ ] **Udio adapter** — no public API yet; symmetrical class will land when one ships
-- [ ] **Tempo / key auto-detect on import** — wire `audio_analyze` into the import path
+- [x] **Tempo / key auto-detect on import** — `song_analyze` reads tempo from Live + estimates key via librosa chroma on a 30 s slice bounce
+
+## Phase 7 — Conversational song flow (DONE)
+
+Goal: a producer can say "transpose this song to F# and create all track variations", and the chain happens end-to-end without naming individual tools.
+
+- [x] **`song_analyze`** — tempo + length + librosa key estimate + Live Scale UI hint, in one call
+- [x] **`song_transpose`** — per-clip in-place transpose (warp=on, warp_mode=Complex Pro, pitch_coarse += delta on every audio arrangement clip; note pitches += delta on every MIDI arrangement clip); snapshot/restore around a single bounce so the source session is bit-identical afterwards. New bridge handlers: `clip.get_arrangement_pitch_state`, `clip.set_arrangement_warp`, `clip.set_arrangement_warp_mode`, `clip.set_arrangement_pitch`, `clip.get_arrangement_notes`, `clip.set_arrangement_notes`.
+- [x] **`song_make_variations`** — instrument-up remixes (focal stem +6, others -3) + instrumental + recombined original, offline math via extended `mix_stems_to_master(gains_db=...)`
+- [x] **`song_import_variations_to_live`** — bulk-create one new audio track per variation, load the wav into clip slot 0
+- [ ] **Session-view clip transposition** — current scope is arrangement-view only; songs that drive playback from session clips need the same bridge handlers extended to clip slots. Most arrangement bounces don't fire session clips, so this is a deferred follow-up.
 
 ---
 
