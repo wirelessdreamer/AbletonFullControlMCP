@@ -202,14 +202,12 @@ class _FakeOSCClient:
             return (self.tempo,)
         if addr == "/live/song/get/song_length":
             return (self.song_length_beats,)
-        if addr == "/live/track/get/arrangement_clips/length":
-            ti = int(args[0])
-            count = self.arrangement_clips_per_track[ti] if ti < len(self.arrangement_clips_per_track) else 0
-            # Reply shape: (track_id, idx_0, len_0, idx_1, len_1, ...)
-            reply = [ti]
-            for i in range(count):
-                reply.extend([i, 4.0])
-            return tuple(reply)
+        # NOTE: /live/track/get/arrangement_clips/length is NOT mocked here.
+        # ``_arrangement_clip_count`` was migrated to the bridge handler
+        # ``clip.list_arrangement_clips`` because AbletonOSC's reply for the
+        # OSC equivalent is unreliable (caches via listeners; misses
+        # clips dragged in after startup). The fake bridge below provides
+        # the per-track clip count.
         raise AssertionError(f"unexpected OSC request: {addr} {args!r}")
 
     def send(self, *_args: Any, **_kwargs: Any) -> None:
@@ -229,6 +227,23 @@ class _FakeBridgeClient:
         self.calls.append((op, dict(kwargs)))
         ti = int(kwargs.get("track_index", 0))
         ci = int(kwargs.get("clip_index", 0))
+        if op == "clip.list_arrangement_clips":
+            # Direct-LOM clip enumeration (replaces the old OSC-based count
+            # because AbletonOSC's reply is unreliable on user-drag clips).
+            clips = []
+            all_in_track = sorted(
+                [c for (t, c) in (self.audio_clips | self.midi_clips) if t == ti]
+            )
+            for c_idx in all_in_track:
+                clips.append({
+                    "clip_index": c_idx,
+                    "name": f"clip-{ti}-{c_idx}",
+                    "length": 4.0,
+                    "start_time": 0.0,
+                    "is_midi_clip": (ti, c_idx) in self.midi_clips,
+                    "is_audio_clip": (ti, c_idx) in self.audio_clips,
+                })
+            return {"track_index": ti, "clips": clips}
         if op == "clip.get_arrangement_pitch_state":
             is_midi = (ti, ci) in self.midi_clips
             return {
