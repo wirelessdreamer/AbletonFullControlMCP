@@ -25,6 +25,7 @@ from .tools import (
     listeners,
     midi_files,
     midi_mapping,
+    mix,
     presets,
     project,
     render,
@@ -62,7 +63,9 @@ def build_server() -> FastMCP:
             "arrangement_* timeline view, view_* selection, routing_* I/O, "
             "device_* parameters, midi_map_* mapping, midi_file_* offline .mid editing, "
             "audio_* feature extraction, listen_* event subscriptions, op_* high-level ops, "
-            "browser_*, render_*, sound_*, ableton_* (Phase 2-4 stubs)."
+            "browser_*, render_*, sound_*, mix_* (multi-track masking analysis + "
+            "propose/apply/verify loop driven by intent words like 'cuts_through', "
+            "'muddy', 'harsh'), ableton_* (Phase 2-4 stubs)."
         ),
     )
 
@@ -105,6 +108,9 @@ def build_server() -> FastMCP:
     song_flow.register(mcp)
     # One-call session snapshot for question-answering ("what's on track 3?").
     project.register(mcp)
+    # Mix-aware shaping — multi-track masking analysis, propose/apply/verify
+    # loop driven by intent words ("cuts_through", "muddy", "harsh", ...).
+    mix.register(mcp)
 
     return mcp
 
