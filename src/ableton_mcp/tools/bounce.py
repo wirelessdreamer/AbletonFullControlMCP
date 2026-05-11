@@ -42,6 +42,7 @@ def register(mcp: FastMCP) -> None:
         duration_sec: float,
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
+        warmup_sec: float = 0.0,
     ) -> dict[str, Any]:
         """Bounce the entire song (master mix) to a wav (and optionally mp3).
 
@@ -53,9 +54,16 @@ def register(mcp: FastMCP) -> None:
 
         If ``encode_mp3`` is True and ffmpeg is on PATH, also writes an mp3
         next to the wav at ``bitrate_kbps``.
+
+        ``warmup_sec`` runs a brief no-record playback before the real
+        capture to prime samplers + the audio engine. Use 0.3-0.5 s if the
+        first second of your bounce comes out silent on fresh sessions
+        (Live's samplers lazy-load on first trigger). Default 0 (off).
         """
         try:
-            wav_result = await bounce_song_via_resampling(output_path, duration_sec)
+            wav_result = await bounce_song_via_resampling(
+                output_path, duration_sec, warmup_sec=warmup_sec,
+            )
         except Exception as e:
             return {"status": "error", "error": f"{type(e).__name__}: {e}"}
         if not wav_result.get("copied"):
@@ -79,6 +87,7 @@ def register(mcp: FastMCP) -> None:
         include_master: bool = False,
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
+        warmup_sec: float = 0.0,
     ) -> dict[str, Any]:
         """Bounce specific tracks to per-track wav stems in ONE realtime pass.
 
@@ -90,10 +99,16 @@ def register(mcp: FastMCP) -> None:
 
         Set ``include_master=True`` to also capture the master mix in the
         same pass (extra resampling track).
+
+        ``warmup_sec`` runs a brief no-record playback before the real
+        capture to prime samplers + the audio engine. Use 0.3-0.5 s if your
+        first bounce of a fresh session shows silent leading audio.
         """
         try:
             r = await bounce_tracks_via_resampling(
-                track_indices, output_dir, duration_sec, include_master=include_master,
+                track_indices, output_dir, duration_sec,
+                include_master=include_master,
+                warmup_sec=warmup_sec,
             )
         except Exception as e:
             return {"status": "error", "error": f"{type(e).__name__}: {e}"}
@@ -128,16 +143,24 @@ def register(mcp: FastMCP) -> None:
         include_master: bool = True,
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
+        warmup_sec: float = 0.5,
     ) -> dict[str, Any]:
         """Bounce every un-muted track (+ master) as separate stems in one pass.
 
         Convenience wrapper: queries every track's mute state, skips muted
         ones and tracks without audio output, then runs bounce_tracks on the
         rest. ``include_master=True`` adds a Resampling track for the full mix.
+
+        ``warmup_sec`` defaults to 0.5 here (higher than the other bounce_*
+        tools) because this entrypoint is most often used on fresh sessions
+        — exactly where the first-bounce-of-fresh-sampler silence bug
+        bites hardest. Set to 0 to disable.
         """
         try:
             r = await bounce_enabled_via_resampling(
-                output_dir, duration_sec, include_master=include_master,
+                output_dir, duration_sec,
+                include_master=include_master,
+                warmup_sec=warmup_sec,
             )
         except Exception as e:
             return {"status": "error", "error": f"{type(e).__name__}: {e}"}
