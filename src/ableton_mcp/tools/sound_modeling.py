@@ -194,7 +194,7 @@ def register(mcp: FastMCP) -> None:
             ds.set_meta("param_names", ",".join(planner.param_names))
             for cell in planner:
                 try:
-                    audio = renderer.render(cell)
+                    audio = await renderer.render_async(cell)
                     feats = extract_features(np.asarray(audio, dtype=np.float32), sr=sample_rate)
                     ds.append(cell, feats, audio_path=None, device_id=device_id)
                     probed += 1
@@ -366,8 +366,6 @@ def register(mcp: FastMCP) -> None:
         if parameter_name not in ranges:
             return {"error": f"parameter {parameter_name!r} unknown; have {sorted(ranges)}"}
 
-        planner = SweepPlanner(ranges, steps_per_param=steps, strategy="grid", seed=0)
-
         # Hold every other param at its midpoint while sweeping the named one.
         defaults: dict[str, float] = {
             name: 0.5 * (lo + hi) for name, (lo, hi) in ranges.items()
@@ -383,7 +381,7 @@ def register(mcp: FastMCP) -> None:
             for v in sweep_values:
                 cell = dict(defaults)
                 cell[parameter_name] = float(v)
-                audio = renderer.render(cell)
+                audio = await renderer.render_async(cell)
                 feats = extract_features(np.asarray(audio, dtype=np.float32), sr=sample_rate)
                 rows.append(
                     {
