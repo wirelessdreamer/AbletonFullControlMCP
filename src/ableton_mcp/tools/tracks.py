@@ -120,16 +120,57 @@ def register(mcp: FastMCP) -> None:
         return {"status": "return_created", "name": name}
 
     @mcp.tool()
-    async def track_delete(track_index: int) -> dict[str, int]:
-        """Delete a regular track by index."""
-        (await get_client()).send("/live/song/delete_track", int(track_index))
-        return {"deleted_index": track_index}
+    async def track_delete(
+        track_index: int, dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Delete a regular track by index.
+
+        ``dry_run=True`` returns a structured summary of what would be
+        deleted (track name, total track count before/after) WITHOUT
+        actually deleting. Use for LLM-mediated confirmation workflows
+        before destructive operations.
+        """
+        client = await get_client()
+        if dry_run:
+            try:
+                names = list(await client.request("/live/song/get/track_names"))
+            except Exception:
+                names = []
+            track_name = (
+                names[track_index] if 0 <= track_index < len(names) else None
+            )
+            return {
+                "dry_run": True,
+                "would_delete": True,
+                "kind": "track",
+                "track_index": int(track_index),
+                "track_name": track_name,
+                "num_tracks_before": len(names),
+                "num_tracks_after": max(0, len(names) - 1),
+                "actual_state_unchanged": True,
+            }
+        client.send("/live/song/delete_track", int(track_index))
+        return {"deleted_index": track_index, "dry_run": False}
 
     @mcp.tool()
-    async def track_delete_return(return_track_index: int) -> dict[str, int]:
-        """Delete a return track by its return-track index."""
-        (await get_client()).send("/live/song/delete_return_track", int(return_track_index))
-        return {"deleted_return_index": return_track_index}
+    async def track_delete_return(
+        return_track_index: int, dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Delete a return track by its return-track index.
+
+        ``dry_run=True`` returns what would be deleted without acting.
+        """
+        client = await get_client()
+        if dry_run:
+            return {
+                "dry_run": True,
+                "would_delete": True,
+                "kind": "return_track",
+                "return_track_index": int(return_track_index),
+                "actual_state_unchanged": True,
+            }
+        client.send("/live/song/delete_return_track", int(return_track_index))
+        return {"deleted_return_index": return_track_index, "dry_run": False}
 
     @mcp.tool()
     async def track_duplicate(track_index: int) -> dict[str, int]:

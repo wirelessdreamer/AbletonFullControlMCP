@@ -53,9 +53,43 @@ def register(mcp: FastMCP) -> None:
         return {"index": new_index, "name": name}
 
     @mcp.tool()
-    async def scene_delete(scene_index: int) -> dict[str, int]:
-        (await get_client()).send("/live/song/delete_scene", int(scene_index))
-        return {"deleted_index": scene_index}
+    async def scene_delete(
+        scene_index: int, dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Delete a scene by index.
+
+        ``dry_run=True`` returns the scene's name + total scene count
+        before/after, WITHOUT deleting.
+        """
+        client = await get_client()
+        if dry_run:
+            try:
+                num_scenes = int((await client.request(
+                    "/live/song/get/num_scenes"
+                ))[0])
+            except Exception:
+                num_scenes = 0
+            scene_name = None
+            try:
+                # Per-scene name read shape: (scene_id, name).
+                reply = await client.request(
+                    "/live/scene/get/name", int(scene_index),
+                )
+                scene_name = reply[1] if len(reply) > 1 else None
+            except Exception:
+                pass
+            return {
+                "dry_run": True,
+                "would_delete": True,
+                "kind": "scene",
+                "scene_index": int(scene_index),
+                "scene_name": scene_name,
+                "num_scenes_before": num_scenes,
+                "num_scenes_after": max(0, num_scenes - 1),
+                "actual_state_unchanged": True,
+            }
+        client.send("/live/song/delete_scene", int(scene_index))
+        return {"deleted_index": scene_index, "dry_run": False}
 
     @mcp.tool()
     async def scene_duplicate(scene_index: int) -> dict[str, int]:
