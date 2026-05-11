@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 
 from ..bridge_client import AbletonBridgeError, get_bridge_client
 from ..osc_client import get_client
+from ..section import DEFAULT_LEAD_KEYWORDS, find_lead_sections
 
 
 def _strip_track_id(args: tuple[Any, ...]) -> list[Any]:
@@ -76,6 +77,60 @@ def register(mcp: FastMCP) -> None:
             "num_tracks": int(await g("/live/song/get/num_tracks")),
             "num_scenes": int(await g("/live/song/get/num_scenes")),
             "current_song_time": float(await g("/live/song/get/current_song_time")),
+        }
+
+    @mcp.tool()
+    async def arrangement_find_sections(
+        track_index: int,
+        method: str = "auto",
+        keywords: list[str] | None = None,
+        min_length_beats: float = 1.0,
+        max_overlapping_other_tracks: int = 1,
+    ) -> dict[str, Any]:
+        """Find regions where ``track_index`` is featured (e.g. "the solo").
+
+        Layer 1.2 of the mix-aware shaping stack. The motivating use case
+        is *"the lead doesn't cut through during the solo"* — to fix that,
+        the system first needs to locate the solo. This tool answers the
+        "where on the timeline" question.
+
+        Three detection strategies:
+
+        - ``method="clip_name"`` — match each clip's name against
+          ``keywords`` (default: ``solo``, ``lead``, ``break``,
+          ``bridge``, ``feature``, ``fill``, ``interlude``).
+          Confidence 1.0 — user labeled it.
+        - ``method="clip_overlap"`` — find clips on the focal track
+          where at most ``max_overlapping_other_tracks`` other tracks
+          are playing simultaneously (a drop-out solo arrangement).
+          Confidence 0.5..0.9 based on how alone the focal is.
+        - ``method="auto"`` (default) — try clip-name first; if it
+          returns nothing, fall back to clip-overlap.
+        - ``method="both"`` — run both, merge overlapping detections.
+
+        Returns:
+            ``{status, focal_track_index, method, sections: [...]}``.
+            Each section has ``start_beats``, ``end_beats``,
+            ``length_beats``, ``confidence`` in [0, 1], ``kind``,
+            ``details`` (detector-specific).
+        """
+        osc = await get_client()
+        try:
+            sections = await find_lead_sections(
+                focal_track_index=int(track_index),
+                method=method,
+                keywords=tuple(keywords) if keywords else DEFAULT_LEAD_KEYWORDS,
+                min_length_beats=float(min_length_beats),
+                max_overlapping_other_tracks=int(max_overlapping_other_tracks),
+                osc_client=osc,
+            )
+        except ValueError as exc:
+            return {"status": "error", "error": str(exc)}
+        return {
+            "status": "ok",
+            "focal_track_index": int(track_index),
+            "method": method,
+            "sections": [s.to_dict() for s in sections],
         }
 
     @mcp.tool()
