@@ -1012,3 +1012,63 @@ async def bounce_region_via_resampling(
         clip_finalize_timeout_sec=clip_finalize_timeout_sec,
     )
     return {**result, **region_meta, "kind": "region_stems"}
+
+
+async def bounce_region_all_active_via_resampling(
+    output_dir: str | os.PathLike,
+    start_beats: float,
+    end_beats: float,
+    *,
+    settle_sec: float = 0.4,
+    warmup_sec: float = 0.0,
+    pre_cleanup: bool = True,
+    cleanup_temp_tracks: bool = True,
+    clip_finalize_timeout_sec: float = DEFAULT_CLIP_FINALIZE_TIMEOUT_SEC,
+) -> dict[str, Any]:
+    """Bounce every un-muted, audio-producing track for a beat region.
+
+    Layer 1.3 of the mix-aware shaping stack. Composes the track-selection
+    logic from :func:`bounce_enabled_via_resampling` with the region-
+    bounded primitive :func:`bounce_region_via_resampling`. The result
+    is the per-track audio Layer 2 (``mix_spectrum_at_region``) needs to
+    diagnose masking and frequency conflict during a specific region.
+
+    Skips the same things ``bounce_enabled_via_resampling`` does:
+    muted tracks, temp-bounce leftover tracks, tracks without audio
+    output (group folders, MIDI-without-instrument).
+    """
+    osc = await get_client()
+    # Run pre-cleanup FIRST so any orphan temp tracks are gone before we
+    # enumerate. Doing this in the underlying bounce_region call would
+    # shift indices AFTER selection — selecting index 2 then deleting an
+    # index-1 orphan leaves index 2 pointing past the end. Run cleanup
+    # up front, then disable it in the inner call.
+    if pre_cleanup:
+        await _cleanup_orphan_temp_tracks()
+
+    n = await _track_count()
+    keep: list[int] = []
+    names = await _track_names()
+    for i in range(n):
+        if (await osc.request("/live/track/get/mute", i))[1]:
+            continue
+        if names[i].endswith(TEMP_TRACK_SUFFIX):
+            continue
+        try:
+            has_audio_out = bool(
+                (await osc.request("/live/track/get/has_audio_output", i))[1]
+            )
+        except Exception:
+            has_audio_out = True
+        if not has_audio_out:
+            continue
+        keep.append(i)
+
+    return await bounce_region_via_resampling(
+        output_dir, start_beats, end_beats,
+        track_indices=keep,
+        settle_sec=settle_sec, warmup_sec=warmup_sec,
+        pre_cleanup=False,  # already done above
+        cleanup_temp_tracks=cleanup_temp_tracks,
+        clip_finalize_timeout_sec=clip_finalize_timeout_sec,
+    )
