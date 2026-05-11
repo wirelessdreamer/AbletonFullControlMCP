@@ -23,6 +23,7 @@ from ..bounce import (
     FreezeBounceError,
     bounce_enabled_via_freeze,
     bounce_enabled_via_resampling,
+    bounce_region_via_resampling,
     bounce_song_via_resampling,
     bounce_tracks_via_freeze,
     bounce_tracks_via_resampling,
@@ -262,6 +263,80 @@ def register(mcp: FastMCP) -> None:
                 wav = r["master"]["output_path"]
                 try:
                     r["mp3s"].append(encode_wav_to_mp3(wav, wav[:-4] + ".mp3", bitrate_kbps=bitrate_kbps))
+                except Exception as e:
+                    r["mp3s"].append({"error": f"{type(e).__name__}: {e}", "skipped_for": wav})
+        r.setdefault("status", "ok")
+        return r
+
+    @mcp.tool()
+    async def bounce_region(
+        output_dir: str,
+        start_beats: float,
+        end_beats: float,
+        track_indices: list[int] | None = None,
+        encode_mp3: bool = True,
+        bitrate_kbps: int = 192,
+        warmup_sec: float = 0.0,
+    ) -> dict[str, Any]:
+        """Bounce a specific beat range of the arrangement.
+
+        Region-bounded sibling of ``bounce_song`` / ``bounce_tracks``. The
+        building block for the mix-aware shaping stack (see
+        ``docs/MIX_AWARE_SHAPING.md``) — section analysis, masking
+        diagnosis, and A/B verification all bounce a region rather than
+        the whole song.
+
+        - ``track_indices=None`` (default) → bounce the master mix for
+          the region to ``<output_dir>/master_<start>-<end>.wav``.
+        - ``track_indices=[...]`` → bounce per-track stems for the
+          region to ``<output_dir>/stem_<idx>_<name>.wav``, captured in
+          one playback pass.
+
+        Wall-clock cost is real-time: the region's duration in seconds
+        (computed from beats + Live's current tempo). 32 bars at 120 BPM
+        is ~64 s of wall clock. For ultra-fast iteration on a saved
+        project use ``bounce_tracks(mode="freeze")`` for whole-track
+        stems and slice them post-hoc.
+
+        Args:
+            output_dir: directory to write the captured wav(s).
+            start_beats: region start in beats (>= 0).
+            end_beats: region end in beats (> start_beats).
+            track_indices: tracks to capture, or None for master.
+            encode_mp3 / bitrate_kbps / warmup_sec — see ``bounce_song``.
+        """
+        try:
+            r = await bounce_region_via_resampling(
+                output_dir, float(start_beats), float(end_beats),
+                track_indices=track_indices, warmup_sec=warmup_sec,
+            )
+        except ValueError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+        if encode_mp3 and r.get("kind") == "region_master":
+            # Master path: one wav.
+            wav = r.get("output_path")
+            if wav:
+                mp3 = wav[:-4] + ".mp3" if wav.lower().endswith(".wav") else wav + ".mp3"
+                try:
+                    r["mp3"] = encode_wav_to_mp3(wav, mp3, bitrate_kbps=bitrate_kbps)
+                except FFmpegMissing as e:
+                    r["mp3_skipped"] = str(e)
+                except Exception as e:
+                    r["mp3_skipped"] = f"{type(e).__name__}: {e}"
+        elif encode_mp3 and r.get("kind") == "region_stems":
+            r["mp3s"] = []
+            for s in r.get("stems", []):
+                if not s.get("copied"):
+                    continue
+                wav = s["output_path"]
+                mp3 = wav[:-4] + ".mp3"
+                try:
+                    r["mp3s"].append(encode_wav_to_mp3(wav, mp3, bitrate_kbps=bitrate_kbps))
+                except FFmpegMissing as e:
+                    r["mp3s"].append({"error": str(e), "skipped_for": wav})
+                    break
                 except Exception as e:
                     r["mp3s"].append({"error": f"{type(e).__name__}: {e}", "skipped_for": wav})
         r.setdefault("status", "ok")
