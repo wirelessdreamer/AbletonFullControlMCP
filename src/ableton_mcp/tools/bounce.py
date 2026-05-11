@@ -23,6 +23,7 @@ from ..bounce import (
     FreezeBounceError,
     bounce_enabled_via_freeze,
     bounce_enabled_via_resampling,
+    bounce_region_all_active_via_resampling,
     bounce_region_via_resampling,
     bounce_song_via_resampling,
     bounce_tracks_via_freeze,
@@ -326,6 +327,54 @@ def register(mcp: FastMCP) -> None:
                 except Exception as e:
                     r["mp3_skipped"] = f"{type(e).__name__}: {e}"
         elif encode_mp3 and r.get("kind") == "region_stems":
+            r["mp3s"] = []
+            for s in r.get("stems", []):
+                if not s.get("copied"):
+                    continue
+                wav = s["output_path"]
+                mp3 = wav[:-4] + ".mp3"
+                try:
+                    r["mp3s"].append(encode_wav_to_mp3(wav, mp3, bitrate_kbps=bitrate_kbps))
+                except FFmpegMissing as e:
+                    r["mp3s"].append({"error": str(e), "skipped_for": wav})
+                    break
+                except Exception as e:
+                    r["mp3s"].append({"error": f"{type(e).__name__}: {e}", "skipped_for": wav})
+        r.setdefault("status", "ok")
+        return r
+
+    @mcp.tool()
+    async def bounce_region_all_active(
+        output_dir: str,
+        start_beats: float,
+        end_beats: float,
+        encode_mp3: bool = True,
+        bitrate_kbps: int = 192,
+        warmup_sec: float = 0.0,
+    ) -> dict[str, Any]:
+        """Bounce every un-muted, audio-producing track for a beat region.
+
+        Layer 1.3 of the mix-aware shaping stack (see
+        ``docs/MIX_AWARE_SHAPING.md``). Combines the track-selection
+        logic of ``bounce_enabled`` with the region-bounded primitive
+        ``bounce_region``. Produces per-track stems for the requested
+        region — the input format Layer 2's spectral / masking analysis
+        needs.
+
+        Skips muted tracks, temp tracks from previous crashed bounces,
+        and tracks without audio output (group folders, MIDI without
+        instrument).
+        """
+        try:
+            r = await bounce_region_all_active_via_resampling(
+                output_dir, float(start_beats), float(end_beats),
+                warmup_sec=warmup_sec,
+            )
+        except ValueError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+        if encode_mp3:
             r["mp3s"] = []
             for s in r.get("stems", []):
                 if not s.get("copied"):
