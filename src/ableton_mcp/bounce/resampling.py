@@ -279,10 +279,13 @@ async def _delete_track(track_index: int) -> None:
     await asyncio.sleep(0.15)
 
 
-async def _record_arrangement(duration_sec: float, settle_sec: float = 0.4) -> None:
-    """Stop, jump to 0, enable record, start playback, wait, stop, disable record."""
+async def _record_arrangement(
+    duration_sec: float, settle_sec: float = 0.4, start_beat: float = 0.0,
+) -> None:
+    """Stop, jump to ``start_beat``, enable record, start playback, wait, stop, disable record."""
     await _record_arrangement_with_progress(
         duration_sec, settle_sec=settle_sec, progress_callback=None,
+        start_beat=start_beat,
     )
 
 
@@ -290,6 +293,7 @@ async def _record_arrangement_with_progress(
     duration_sec: float,
     *,
     settle_sec: float = 0.4,
+    start_beat: float = 0.0,
     progress_callback: "ProgressCallback | None" = None,
     progress_start: float = 0.0,
     progress_end: float = 1.0,
@@ -312,7 +316,9 @@ async def _record_arrangement_with_progress(
     try:
         osc.send("/live/song/stop_playing")
         await asyncio.sleep(0.1)
-        osc.send("/live/song/set/current_song_time", 0.0)
+        # Park playhead at start_beat. AbletonOSC's current_song_time is
+        # in beats — pass beat number directly.
+        osc.send("/live/song/set/current_song_time", float(start_beat))
         await asyncio.sleep(0.1)
         # Enable arrangement record (the global record button at top of transport).
         osc.send("/live/song/set/record_mode", 1)
@@ -348,7 +354,7 @@ async def _record_arrangement_with_progress(
             pass
 
 
-async def _warmup_playback(duration_sec: float) -> None:
+async def _warmup_playback(duration_sec: float, start_beat: float = 0.0) -> None:
     """Run a brief no-record playback to prime samplers + the audio engine.
 
     First-bounce-of-fresh-sampler shows up as silent leading audio because
@@ -356,21 +362,25 @@ async def _warmup_playback(duration_sec: float) -> None:
     trigger. A short warmup pass prevents that — by the time we start the
     real record, every sampler in the arrangement has been hit at least
     once and is hot.
+
+    ``start_beat`` parks the playhead at a specific song position before
+    + after the warmup. Defaults to 0 (song top). Region-bounded bounces
+    pass the region's start so warmup primes the right samplers.
     """
     if duration_sec <= 0:
         return
     osc = await get_client()
     osc.send("/live/song/stop_playing")
     await asyncio.sleep(0.05)
-    osc.send("/live/song/set/current_song_time", 0.0)
+    osc.send("/live/song/set/current_song_time", float(start_beat))
     await asyncio.sleep(0.05)
     osc.send("/live/song/start_playing")
     await asyncio.sleep(float(duration_sec))
     osc.send("/live/song/stop_playing")
     await asyncio.sleep(0.2)
-    # Re-park playhead at 0 so the subsequent _record_arrangement call
+    # Re-park playhead at start_beat so the subsequent record call
     # starts from the same spot the user expects.
-    osc.send("/live/song/set/current_song_time", 0.0)
+    osc.send("/live/song/set/current_song_time", float(start_beat))
     await asyncio.sleep(0.05)
 
 
@@ -546,6 +556,7 @@ async def bounce_song_via_resampling(
     *,
     settle_sec: float = 0.4,
     warmup_sec: float = 0.0,
+    start_beat: float = 0.0,
     pre_cleanup: bool = True,
     cleanup_temp_track: bool = True,
     clip_finalize_timeout_sec: float = DEFAULT_CLIP_FINALIZE_TIMEOUT_SEC,
@@ -597,7 +608,7 @@ async def bounce_song_via_resampling(
     await _report(progress_callback, 0.02, "pre-cleanup done")
 
     if warmup_sec > 0:
-        await _warmup_playback(warmup_sec)
+        await _warmup_playback(warmup_sec, start_beat=start_beat)
         await _report(progress_callback, 0.05, "warmup complete")
 
     temp_name = "Master Bounce" + TEMP_TRACK_SUFFIX
@@ -615,6 +626,7 @@ async def bounce_song_via_resampling(
         # recording phase to [0.08, 0.85].
         await _record_arrangement_with_progress(
             duration_sec, settle_sec=settle_sec,
+            start_beat=start_beat,
             progress_callback=progress_callback,
             progress_start=0.08, progress_end=0.85,
         )
@@ -686,6 +698,7 @@ async def bounce_tracks_via_resampling(
     *,
     settle_sec: float = 0.4,
     warmup_sec: float = 0.0,
+    start_beat: float = 0.0,
     pre_cleanup: bool = True,
     include_master: bool = False,
     cleanup_temp_tracks: bool = True,
@@ -714,7 +727,7 @@ async def bounce_tracks_via_resampling(
             )
 
     if warmup_sec > 0:
-        await _warmup_playback(warmup_sec)
+        await _warmup_playback(warmup_sec, start_beat=start_beat)
 
     names = await _track_names()
     source_routings: list[tuple[int, str, str]] = []
@@ -748,7 +761,9 @@ async def bounce_tracks_via_resampling(
     sources_for_copy: list[tuple[int, str, Path, str | None]] = []
     master_src: str | None = None
     try:
-        await _record_arrangement(duration_sec, settle_sec=settle_sec)
+        await _record_arrangement(
+            duration_sec, settle_sec=settle_sec, start_beat=start_beat,
+        )
         # Harvest file paths BEFORE deleting tracks (file_path is on the clip).
         for temp_idx, source_idx, source_name, r_ok, a_ok in temp_indices:
             src = await _wait_for_clip_file_path(
@@ -877,3 +892,123 @@ async def bounce_enabled_via_resampling(
         include_master=include_master,
         clip_finalize_timeout_sec=clip_finalize_timeout_sec,
     )
+
+
+# ---------------------------------------------------------------------------
+# Region-bounded bounce — Layer 1.1 of the mix-aware shaping stack.
+#
+# Everything above operates on the whole song / whole arrangement. The
+# conversational mix-shaping use case ("the lead doesn't cut through during
+# the solo") needs to bounce a SPECIFIC beat range. These helpers wrap the
+# lower-level bounce functions with a beat→seconds conversion that reads
+# tempo from Live, then start the playhead at the region's start.
+#
+# Caveat: the bounce records real-time, so a 32-bar region at 120 BPM still
+# takes ~32 s wall-clock. Faster than bouncing the whole song, but not
+# instant. For ultra-fast iteration use the freeze path
+# (bounce_tracks_via_freeze) — that produces a full-track wav offline, and
+# region slicing is downstream librosa.
+# ---------------------------------------------------------------------------
+
+
+async def _read_tempo() -> float:
+    """Current tempo in BPM. Used to translate beats → seconds for region bounces."""
+    osc = await get_client()
+    return float((await osc.request("/live/song/get/tempo"))[0])
+
+
+def _beats_to_seconds(beats: float, tempo_bpm: float) -> float:
+    """Convert beats to seconds at the given tempo. Pure math — exposed
+    for tests and for downstream tooling that needs the same math without
+    going through Live."""
+    if tempo_bpm <= 0:
+        raise ValueError(f"tempo must be > 0 (got {tempo_bpm})")
+    return float(beats) * 60.0 / float(tempo_bpm)
+
+
+async def bounce_region_via_resampling(
+    output_dir: str | os.PathLike,
+    start_beats: float,
+    end_beats: float,
+    *,
+    track_indices: Sequence[int] | None = None,
+    settle_sec: float = 0.4,
+    warmup_sec: float = 0.0,
+    pre_cleanup: bool = True,
+    cleanup_temp_tracks: bool = True,
+    clip_finalize_timeout_sec: float = DEFAULT_CLIP_FINALIZE_TIMEOUT_SEC,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    """Bounce a specific beat range of the arrangement.
+
+    ``[start_beats, end_beats]`` is the song-time region to capture.
+    Tempo is read from Live to convert beats → record duration in seconds.
+
+    When ``track_indices`` is None (default), bounces the **master mix**
+    for the region to ``<output_dir>/master_<start>-<end>.wav``. When a
+    list of indices is provided, bounces each track to
+    ``<output_dir>/stem_<idx>_<name>.wav`` (per-track stems for the
+    region, captured in one playback pass).
+
+    Args:
+        output_dir: where to write the captured wav(s).
+        start_beats: region start in beats (0-based).
+        end_beats: region end in beats (must be > start_beats).
+        track_indices: which tracks to capture. None = master mix.
+        warmup_sec / settle_sec / pre_cleanup / cleanup_temp_tracks /
+            clip_finalize_timeout_sec / progress_callback — see the
+            lower-level bounce functions.
+
+    Returns:
+        Same shape as the underlying bounce (master or per-track) plus
+        ``region_start_beats`` / ``region_end_beats`` / ``region_seconds``
+        metadata.
+
+    Raises:
+        ValueError on invalid range (end <= start, negative start).
+    """
+    if start_beats < 0:
+        raise ValueError(f"start_beats must be >= 0 (got {start_beats})")
+    if end_beats <= start_beats:
+        raise ValueError(
+            f"end_beats must be > start_beats (got start={start_beats}, end={end_beats})"
+        )
+
+    tempo = await _read_tempo()
+    duration_sec = _beats_to_seconds(end_beats - start_beats, tempo)
+    out_root = Path(output_dir).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    region_meta = {
+        "region_start_beats": float(start_beats),
+        "region_end_beats": float(end_beats),
+        "region_seconds": duration_sec,
+        "tempo_at_bounce": tempo,
+    }
+
+    if track_indices is None:
+        # Master bounce.
+        safe_start = str(start_beats).replace(".", "p")
+        safe_end = str(end_beats).replace(".", "p")
+        out_path = out_root / f"master_{safe_start}-{safe_end}.wav"
+        result = await bounce_song_via_resampling(
+            out_path, duration_sec,
+            settle_sec=settle_sec, warmup_sec=warmup_sec,
+            start_beat=float(start_beats),
+            pre_cleanup=pre_cleanup,
+            cleanup_temp_track=cleanup_temp_tracks,
+            clip_finalize_timeout_sec=clip_finalize_timeout_sec,
+            progress_callback=progress_callback,
+        )
+        return {**result, **region_meta, "kind": "region_master"}
+
+    # Per-track stems for the region.
+    result = await bounce_tracks_via_resampling(
+        list(track_indices), out_root, duration_sec,
+        settle_sec=settle_sec, warmup_sec=warmup_sec,
+        start_beat=float(start_beats),
+        pre_cleanup=pre_cleanup,
+        cleanup_temp_tracks=cleanup_temp_tracks,
+        clip_finalize_timeout_sec=clip_finalize_timeout_sec,
+    )
+    return {**result, **region_meta, "kind": "region_stems"}

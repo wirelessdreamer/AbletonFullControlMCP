@@ -23,6 +23,7 @@ from .resampling import (  # noqa: F401
     bounce_song_via_resampling,
     bounce_tracks_via_resampling,
     bounce_enabled_via_resampling,
+    bounce_region_via_resampling,
 )
 from .freeze import (  # noqa: F401
     bounce_tracks_via_freeze,
