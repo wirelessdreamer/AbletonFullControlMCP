@@ -338,7 +338,11 @@ def _system_ping(c_instance, **_):
 #           browser ops)
 #   1.1.0 — added track.is_frozen, track.unfreeze, project.get_file_path,
 #           project.list_freezing_dir (PR #10, freeze-mode stem bouncing)
-BRIDGE_VERSION = "1.1.0"
+#   1.2.0 — added session-clip handlers: clip.get_session_pitch_state,
+#           set_session_warp, set_session_warp_mode, set_session_pitch,
+#           get_session_notes, set_session_notes, list_session_clip_slots
+#           (session-view clip transposition)
+BRIDGE_VERSION = "1.2.0"
 
 
 def _system_version(c_instance, _handler_table=None, **_):
