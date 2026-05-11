@@ -8,8 +8,9 @@
 
 | Status | Layer | Item | PR / Branch |
 |---|---|---|---|
-| 🟡 in progress | L1.1 | Region-bounded bounce primitive | `claude/mix-aware-shaping-l1-region-bounce` |
-| ⬜ | L1.2 | Section detection (cheap + audio-based) | |
+| ✅ | L1.1 | Region-bounded bounce primitive | [#21](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/21) |
+| 🟡 in progress | L1.2 | Section detection (cheap — clip-name + overlap) | `claude/mix-aware-shaping-l1-section-detect` |
+| ⬜ | L1.2b | Section detection (audio-based, RMS) — follow-up | |
 | ⬜ | L1.3 | `region_bounce_all_active` wrapper | |
 | ⬜ | L2.1 | `mix_spectrum_at_region` — per-track band energy | |
 | ⬜ | L2.2 | `mix_masking_analyze` — which tracks mask the focal | |
