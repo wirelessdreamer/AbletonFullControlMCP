@@ -112,12 +112,38 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool()
-    async def clip_delete(track_index: int, clip_index: int) -> dict[str, int]:
-        """Delete a clip from a Session slot."""
-        (await get_client()).send(
-            "/live/clip_slot/delete_clip", int(track_index), int(clip_index)
+    async def clip_delete(
+        track_index: int, clip_index: int, dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Delete a clip from a Session slot.
+
+        ``dry_run=True`` returns whether the slot currently has a clip
+        and what its name is, WITHOUT deleting. Useful for asking the
+        user "are you sure?" before a destructive call.
+        """
+        client = await get_client()
+        if dry_run:
+            try:
+                names = list(await client.request(
+                    "/live/clip/get/name", int(track_index), int(clip_index),
+                ))
+                clip_name = names[1] if len(names) > 1 else None
+            except Exception:
+                clip_name = None
+            return {
+                "dry_run": True,
+                "would_delete": True,
+                "kind": "session_clip",
+                "track_index": int(track_index),
+                "clip_index": int(clip_index),
+                "clip_name": clip_name,
+                "actual_state_unchanged": True,
+            }
+        client.send(
+            "/live/clip_slot/delete_clip", int(track_index), int(clip_index),
         )
-        return {"track_index": track_index, "clip_index": clip_index}
+        return {"track_index": track_index, "clip_index": clip_index,
+                "dry_run": False}
 
     @mcp.tool()
     async def clip_duplicate_loop(track_index: int, clip_index: int) -> dict[str, int]:
