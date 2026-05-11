@@ -19,9 +19,11 @@
 | ✅ | L4.2 | `mix_apply` — push to Live (auto-insert EQ Eight) | [#28](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/28) |
 | ⬜ | L4.3 | Region-bounded automation writes (LOM-limited; v2) | |
 | ✅ | L5 | `mix_verify_intent` — A/B before/after | [#29](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/29) |
-| 🟡 in progress | KB | Money-bands + masking rules data file | `claude/mix-aware-shaping-kb` |
+| ✅ | KB | Money-bands + masking rules data file | [#30](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/30) |
 
 Legend: ⬜ not started · 🟡 in progress · ✅ merged
+
+**Status: Core build-out (L1–L5 + KB) complete.** A user can now say *"the lead guitar doesn't cut through during the solo"* and the MCP can locate the section, diagnose masking, propose EQ moves with rationales, apply them (auto-inserting EQ Eight when needed), and verify the intent was achieved by diffing before/after spectra. The two follow-ups (L1.2b audio-based section detection, L4.3 region-bounded automation) are unblocking the next round of improvements but aren't on the critical path for the core conversational loop.
 
 ---
 
