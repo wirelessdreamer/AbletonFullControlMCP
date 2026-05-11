@@ -342,7 +342,11 @@ def _system_ping(c_instance, **_):
 #           set_session_warp, set_session_warp_mode, set_session_pitch,
 #           get_session_notes, set_session_notes, list_session_clip_slots
 #           (session-view clip transposition)
-BRIDGE_VERSION = "1.2.0"
+#   1.3.0 — clip.reverse now implements MIDI clip reverse via note
+#           manipulation (was audio-only-with-no-LOM-method previously,
+#           so it always returned supported=false). Audio clip reverse
+#           still returns supported=false (no LOM method exists).
+BRIDGE_VERSION = "1.3.0"
 
 
 def _system_version(c_instance, _handler_table=None, **_):
