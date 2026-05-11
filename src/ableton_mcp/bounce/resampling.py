@@ -54,6 +54,25 @@ from ..osc_client import get_client
 
 log = logging.getLogger(__name__)
 
+
+# Progress callback signature for long-running bounce calls.
+# ``progress`` is in [0.0, 1.0]; ``message`` is a short phase label.
+# Implementations should be cheap and tolerate being called many times.
+ProgressCallback = Callable[[float, str], Awaitable[None]]
+
+
+async def _report(callback: "ProgressCallback | None", progress: float, message: str) -> None:
+    """Invoke a progress callback if provided, swallowing any errors so a
+    failing notifier never disrupts the underlying bounce. Progress
+    notifications are best-effort — a closed pipe or a bug in the
+    callback shouldn't make the bounce fail."""
+    if callback is None:
+        return
+    try:
+        await callback(float(progress), str(message))
+    except Exception as exc:  # pragma: no cover — defensive
+        log.debug("progress callback raised %r — ignoring", exc)
+
 # Suffix appended to temp audio track names — used to identify and clean up
 # our own scratch tracks if a previous run crashed.
 TEMP_TRACK_SUFFIX = " [bounce-temp]"
@@ -262,21 +281,71 @@ async def _delete_track(track_index: int) -> None:
 
 async def _record_arrangement(duration_sec: float, settle_sec: float = 0.4) -> None:
     """Stop, jump to 0, enable record, start playback, wait, stop, disable record."""
+    await _record_arrangement_with_progress(
+        duration_sec, settle_sec=settle_sec, progress_callback=None,
+    )
+
+
+async def _record_arrangement_with_progress(
+    duration_sec: float,
+    *,
+    settle_sec: float = 0.4,
+    progress_callback: "ProgressCallback | None" = None,
+    progress_start: float = 0.0,
+    progress_end: float = 1.0,
+    poll_interval_sec: float = 1.0,
+) -> None:
+    """Record the arrangement for ``duration_sec`` seconds, emitting
+    periodic progress notifications mapped onto [progress_start,
+    progress_end] of the overall bounce.
+
+    Cancellation behaviour: if the awaiting task is cancelled at any
+    point — during setup sends, during the recording wait, or in the
+    cleanup — we still issue ``stop_playing`` + ``record_mode=0`` as
+    fire-and-forget OSC sends in the ``finally`` block, so the user's
+    session never ends with playback running and record_mode lit.
+    Cleanup sends don't ``await`` (the awaiting task is already being
+    cancelled, so a fresh await inside ``finally`` would itself be
+    cancelled before completing).
+    """
     osc = await get_client()
-    osc.send("/live/song/stop_playing")
-    await asyncio.sleep(0.1)
-    osc.send("/live/song/set/current_song_time", 0.0)
-    await asyncio.sleep(0.1)
-    # Enable arrangement record (the global record button at top of transport).
-    osc.send("/live/song/set/record_mode", 1)
-    await asyncio.sleep(0.1)
-    osc.send("/live/song/start_playing")
-    # Real-time wait. settle_sec gives sfrecord-style trailing silence buffer.
-    await asyncio.sleep(float(duration_sec) + float(settle_sec))
-    osc.send("/live/song/stop_playing")
-    await asyncio.sleep(0.1)
-    osc.send("/live/song/set/record_mode", 0)
-    await asyncio.sleep(0.1)
+    try:
+        osc.send("/live/song/stop_playing")
+        await asyncio.sleep(0.1)
+        osc.send("/live/song/set/current_song_time", 0.0)
+        await asyncio.sleep(0.1)
+        # Enable arrangement record (the global record button at top of transport).
+        osc.send("/live/song/set/record_mode", 1)
+        await asyncio.sleep(0.1)
+        osc.send("/live/song/start_playing")
+
+        total = float(duration_sec) + float(settle_sec)
+        if progress_callback is None or total <= poll_interval_sec:
+            # Either no progress reporting requested, or the bounce is so
+            # short that one chunked wait is fine.
+            await asyncio.sleep(total)
+        else:
+            elapsed = 0.0
+            while elapsed < total:
+                chunk = min(poll_interval_sec, total - elapsed)
+                await asyncio.sleep(chunk)
+                elapsed += chunk
+                frac = elapsed / total
+                # Map [0, 1] within recording → [progress_start, progress_end].
+                mapped = progress_start + frac * (progress_end - progress_start)
+                await _report(
+                    progress_callback, mapped,
+                    f"recording {elapsed:.1f}/{total:.1f} s",
+                )
+    finally:
+        # Best-effort cleanup. Fire-and-forget; do NOT await anything
+        # here because we may be running under cancellation, where any
+        # fresh await gets cancelled too.
+        try:
+            osc.send("/live/song/stop_playing")
+            osc.send("/live/song/set/record_mode", 0)
+        except Exception:
+            pass
 
 
 async def _warmup_playback(duration_sec: float) -> None:
@@ -480,6 +549,7 @@ async def bounce_song_via_resampling(
     pre_cleanup: bool = True,
     cleanup_temp_track: bool = True,
     clip_finalize_timeout_sec: float = DEFAULT_CLIP_FINALIZE_TIMEOUT_SEC,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     """Capture the master mix to ``output_path`` via a Resampling track.
 
@@ -516,15 +586,19 @@ async def bounce_song_via_resampling(
 
     diagnostics: list[str] = []
 
+    await _report(progress_callback, 0.0, "starting")
+
     if pre_cleanup:
         cleaned = await _cleanup_orphan_temp_tracks()
         if cleaned:
             diagnostics.append(
                 f"cleaned up {len(cleaned)} orphan temp track(s) from a previous run"
             )
+    await _report(progress_callback, 0.02, "pre-cleanup done")
 
     if warmup_sec > 0:
         await _warmup_playback(warmup_sec)
+        await _report(progress_callback, 0.05, "warmup complete")
 
     temp_name = "Master Bounce" + TEMP_TRACK_SUFFIX
     pre_count = await _track_count()
@@ -535,9 +609,22 @@ async def bounce_song_via_resampling(
     try:
         routing_ok = await _set_input_routing(new_idx, "Resampling", "Post Mixer")
         arm_ok = await _arm(new_idx, True)
-        await _record_arrangement(duration_sec, settle_sec=settle_sec)
+        await _report(progress_callback, 0.08, "armed; recording")
+        # Recording is the bulk of wall-clock; emit periodic progress so
+        # clients can show "n/N seconds recorded". Progress maps the
+        # recording phase to [0.08, 0.85].
+        await _record_arrangement_with_progress(
+            duration_sec, settle_sec=settle_sec,
+            progress_callback=progress_callback,
+            progress_start=0.08, progress_end=0.85,
+        )
+        await _report(progress_callback, 0.85, "recording complete; harvesting clip")
         src = await _wait_for_clip_file_path(
             new_idx, timeout_sec=clip_finalize_timeout_sec
+        )
+        await _report(
+            progress_callback, 0.92,
+            "clip file harvested" if src else "clip harvest timed out",
         )
         if src is None:
             # Build an actionable diagnostic so the user knows where to
@@ -566,11 +653,20 @@ async def bounce_song_via_resampling(
                 diagnostics.append(err)
             else:
                 await asyncio.sleep(0.3)  # let the OS release the file handle
+        # Final progress notification even on the cancelled/error path.
+        # Errors/cancellation don't reach 1.0 — only successful completion
+        # below does — but we mark the cleanup phase done so the client
+        # can see how far we got.
+        await _report(progress_callback, 0.95, "temp track cleaned up")
 
     result = (
         await _copy_or_skip(src, str(out))
         if src else {"copied": False, "error": "no recorded clip found"}
     )
+    if result.get("copied"):
+        await _report(progress_callback, 1.0, "complete")
+    else:
+        await _report(progress_callback, 0.95, "complete (no audio captured)")
     return {
         "what": "master_via_resampling",
         "duration_sec": duration_sec,

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from ..bounce import (
     FreezeBounceError,
@@ -46,6 +46,7 @@ def register(mcp: FastMCP) -> None:
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
         warmup_sec: float = 0.0,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Bounce the entire song (master mix) to a wav (and optionally mp3).
 
@@ -62,10 +63,30 @@ def register(mcp: FastMCP) -> None:
         capture to prime samplers + the audio engine. Use 0.3-0.5 s if the
         first second of your bounce comes out silent on fresh sessions
         (Live's samplers lazy-load on first trigger). Default 0 (off).
+
+        **Progress + cancellation**: when invoked through an MCP client
+        that supports ``notifications/progress``, this tool emits per-
+        second progress updates during the recording phase (e.g.
+        "recording 12.0/240.0 s") plus phase-boundary notifications at
+        setup/harvest/cleanup boundaries. Cancellation via
+        ``notifications/cancelled`` is handled cleanly: transport is
+        stopped, record mode disabled, the temp track deleted, and the
+        partial bounce raised as a CancelledError without leaving the
+        user's session in a half-armed state.
         """
+        # Build a progress callback bound to the ctx. None when ctx is
+        # absent (e.g. unit tests or older MCP clients) — the bounce
+        # function just no-ops the notifier in that case.
+        async def _on_progress(progress: float, message: str) -> None:
+            if ctx is not None:
+                await ctx.report_progress(progress, 1.0, message=message)
+
+        progress_cb = _on_progress if ctx is not None else None
+
         try:
             wav_result = await bounce_song_via_resampling(
                 output_path, duration_sec, warmup_sec=warmup_sec,
+                progress_callback=progress_cb,
             )
         except Exception as e:
             return {"status": "error", "error": f"{type(e).__name__}: {e}"}
