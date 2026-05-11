@@ -26,6 +26,7 @@ from .tools import (
     midi_files,
     midi_mapping,
     presets,
+    project,
     render,
     routing,
     scenes,
@@ -102,6 +103,8 @@ def build_server() -> FastMCP:
     sound_design.register(mcp)
     # Song flow — analyze, transpose, instrument-up variations, bulk import.
     song_flow.register(mcp)
+    # One-call session snapshot for question-answering ("what's on track 3?").
+    project.register(mcp)
 
     return mcp
 
