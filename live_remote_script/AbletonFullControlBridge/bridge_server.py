@@ -276,7 +276,7 @@ class BridgeServer(object):
     def _build_handler_table(self):
         table = {
             "system.ping": _system_ping,
-            "system.version": _system_version,
+            "system.version": self._system_version,
             "system.reload": self._system_reload,
         }
         for mod, prefix in (
@@ -288,6 +288,14 @@ class BridgeServer(object):
             for name in getattr(mod, "EXPORTS"):
                 table[prefix + name] = getattr(mod, name)
         return table
+
+    def _system_version(self, c_instance, **_):
+        """Return Live + bridge versions + the live handler list.
+
+        Method form so the handler table is in scope. See the module-level
+        ``_system_version`` doc for protocol intent.
+        """
+        return _system_version(c_instance, _handler_table=self._handlers)
 
     def _system_reload(self, c_instance, **_):
         """Reload handler modules from disk and rebuild the dispatch table.
@@ -319,16 +327,42 @@ def _system_ping(c_instance, **_):
     return {"ok": True, "service": "AbletonFullControlBridge"}
 
 
-def _system_version(c_instance, **_):
+# Semver for the bridge wire protocol + handler surface.
+# Bump MINOR when adding handlers (backwards-compatible additions).
+# Bump MAJOR when removing/renaming handlers (breaking changes).
+# Bump PATCH for behaviour fixes that don't change the surface.
+#
+# History:
+#   1.0.0 — initial public version (project.save/info, track group/ungroup/
+#           freeze/flatten/delete_device/list_devices, clip arrangement ops,
+#           browser ops)
+#   1.1.0 — added track.is_frozen, track.unfreeze, project.get_file_path,
+#           project.list_freezing_dir (PR #10, freeze-mode stem bouncing)
+BRIDGE_VERSION = "1.1.0"
+
+
+def _system_version(c_instance, _handler_table=None, **_):
+    """Return both Live's version AND the bridge's own version + handler list.
+
+    The bridge version + handler list let the Python client detect when the
+    user has upgraded the Python package but forgotten to reinstall the
+    Live Remote Script — without that signal, calls to new handlers fail
+    with cryptic "unknown op" errors. With it, the client can warn at
+    startup with an actionable "reinstall the bridge" message.
+    """
+    out = {
+        "bridge_version": BRIDGE_VERSION,
+        "handlers": sorted(_handler_table.keys()) if _handler_table else [],
+    }
     try:
         import Live  # type: ignore  # only available inside Live
         app = Live.Application.get_application()
-        return {
-            "live_version": "%d.%d.%d" % (
-                app.get_major_version(),
-                app.get_minor_version(),
-                app.get_bugfix_version(),
-            ),
-        }
+        out["live_version"] = "%d.%d.%d" % (
+            app.get_major_version(),
+            app.get_minor_version(),
+            app.get_bugfix_version(),
+        )
     except Exception as exc:
-        return {"live_version": None, "error": repr(exc)}
+        out["live_version"] = None
+        out["live_version_error"] = repr(exc)
+    return out
