@@ -62,7 +62,7 @@ log = logging.getLogger(__name__)
 #   MAJOR — breaking changes (handler removed/renamed)
 #   MINOR — backwards-compatible additions (new handler)
 #   PATCH — bug fixes that don't change the surface
-EXPECTED_BRIDGE_VERSION = "1.3.0"
+EXPECTED_BRIDGE_VERSION = "1.4.0"
 
 
 class AbletonBridgeError(RuntimeError):

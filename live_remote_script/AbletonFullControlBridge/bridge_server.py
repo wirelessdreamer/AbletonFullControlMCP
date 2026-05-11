@@ -346,7 +346,11 @@ def _system_ping(c_instance, **_):
 #           manipulation (was audio-only-with-no-LOM-method previously,
 #           so it always returned supported=false). Audio clip reverse
 #           still returns supported=false (no LOM method exists).
-BRIDGE_VERSION = "1.3.0"
+#   1.4.0 — arrangement editing: clip.create_arrangement_midi_clip
+#           (Track.create_midi_clip wrapper) and clip.move_arrangement_clip
+#           (Clip.move wrapper). Enables "insert MIDI clip at bar N" and
+#           "move clip to bar M" workflows without manual UI drag.
+BRIDGE_VERSION = "1.4.0"
 
 
 def _system_version(c_instance, _handler_table=None, **_):
