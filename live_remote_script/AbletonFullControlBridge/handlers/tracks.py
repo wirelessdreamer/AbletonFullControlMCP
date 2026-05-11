@@ -7,7 +7,9 @@ EXPORTS = (
     "group",
     "ungroup",
     "freeze",
+    "unfreeze",
     "flatten",
+    "is_frozen",
     "delete_device",
     "list_devices",
 )
@@ -104,6 +106,57 @@ def flatten(c_instance, track_index=None, **_):
         raise RuntimeError("Track.flatten not available in this Live version")
     fn()
     return {"track_index": int(track_index), "flattened": True}
+
+
+def unfreeze(c_instance, track_index=None, **_):
+    """Unfreeze a previously-frozen track (the reverse of `freeze`).
+
+    Track.unfreeze() exists on Live 11+. Some Live versions only expose this
+    as Track.is_frozen=False assignment; we prefer the explicit method.
+    """
+    if track_index is None:
+        raise ValueError("track_index is required")
+    track = _track(int(track_index))
+    fn = getattr(track, "unfreeze", None)
+    if fn is None:
+        # Fallback for builds where unfreeze isn't on Track: try setting the
+        # property directly (older Live behaviour). If neither path exists,
+        # error out cleanly.
+        try:
+            track.is_frozen = False  # type: ignore[attr-defined]
+            return {"track_index": int(track_index), "unfrozen": True, "via": "is_frozen"}
+        except Exception as exc:
+            raise RuntimeError(
+                "Track.unfreeze not available in this Live version: %s" % exc
+            )
+    fn()
+    return {"track_index": int(track_index), "unfrozen": True, "via": "unfreeze"}
+
+
+def is_frozen(c_instance, track_index=None, **_):
+    """Return the freezing state of a track.
+
+    Maps Live's `Track.freezing_state` int directly:
+        0 = normal (not frozen)
+        1 = frozen
+        2 = flattening (transient state during flatten())
+
+    Falls back to inspecting `Track.is_frozen` (boolean) on builds that
+    don't expose the integer state, mapping to 0 or 1.
+    """
+    if track_index is None:
+        raise ValueError("track_index is required")
+    track = _track(int(track_index))
+    state = getattr(track, "freezing_state", None)
+    if state is not None:
+        return {"track_index": int(track_index), "freezing_state": int(state)}
+    bool_state = getattr(track, "is_frozen", None)
+    if bool_state is not None:
+        return {
+            "track_index": int(track_index),
+            "freezing_state": 1 if bool(bool_state) else 0,
+        }
+    return {"track_index": int(track_index), "freezing_state": 0}
 
 
 def list_devices(c_instance, track_index=None, **_):
