@@ -314,21 +314,37 @@ class _FakeOSCClient:
 
 
 class _FakeBridgeClient:
-    """Records every call. ``state`` simulates what the real bridge would do."""
+    """Records every call. ``state`` simulates what the real bridge would do.
 
-    def __init__(self, audio_clips: list[tuple[int, int]],
-                 midi_clips: list[tuple[int, int]]) -> None:
+    ``audio_clips`` / ``midi_clips`` populate arrangement-view clips on
+    each track. ``session_audio_clips`` / ``session_midi_clips`` populate
+    session-view clip slots (same tuple shape, but the second integer is
+    the slot index instead of the arrangement-clip index).
+    ``list_session_raises_for_tracks`` lets a test simulate the bridge
+    handler being missing (pre-1.2.0 bridges).
+    """
+
+    def __init__(
+        self,
+        audio_clips: list[tuple[int, int]],
+        midi_clips: list[tuple[int, int]],
+        session_audio_clips: list[tuple[int, int]] | None = None,
+        session_midi_clips: list[tuple[int, int]] | None = None,
+        list_session_raises_for_tracks: set[int] | None = None,
+    ) -> None:
         self.audio_clips = set(audio_clips)
         self.midi_clips = set(midi_clips)
+        self.session_audio_clips = set(session_audio_clips or [])
+        self.session_midi_clips = set(session_midi_clips or [])
+        self.list_session_raises_for_tracks = list_session_raises_for_tracks or set()
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def call(self, op: str, **kwargs: Any) -> Any:
         self.calls.append((op, dict(kwargs)))
         ti = int(kwargs.get("track_index", 0))
         ci = int(kwargs.get("clip_index", 0))
+        si = int(kwargs.get("slot_index", 0))
         if op == "clip.list_arrangement_clips":
-            # Direct-LOM clip enumeration (replaces the old OSC-based count
-            # because AbletonOSC's reply is unreliable on user-drag clips).
             clips = []
             all_in_track = sorted(
                 [c for (t, c) in (self.audio_clips | self.midi_clips) if t == ti]
@@ -357,6 +373,47 @@ class _FakeBridgeClient:
             return {"notes": [
                 {"pitch": 60, "start": 0.0, "duration": 1.0, "velocity": 100, "mute": False},
                 {"pitch": 64, "start": 1.0, "duration": 1.0, "velocity": 100, "mute": False},
+            ]}
+        # Session-view counterparts.
+        if op == "clip.list_session_clip_slots":
+            if ti in self.list_session_raises_for_tracks:
+                raise RuntimeError(
+                    "simulated pre-1.2.0 bridge: clip.list_session_clip_slots missing"
+                )
+            slots = []
+            all_session = sorted(
+                [s for (t, s) in
+                 (self.session_audio_clips | self.session_midi_clips)
+                 if t == ti]
+            )
+            for s_idx in all_session:
+                is_midi = (ti, s_idx) in self.session_midi_clips
+                slots.append({
+                    "slot_index": s_idx,
+                    "is_empty": False,
+                    "name": f"slot-{ti}-{s_idx}",
+                    "length": 4.0,
+                    "is_midi_clip": is_midi,
+                    "is_audio_clip": not is_midi,
+                    "color": 0,
+                })
+            return {"track_index": ti, "slots": slots}
+        if op == "clip.get_session_pitch_state":
+            if (ti, si) not in (self.session_audio_clips | self.session_midi_clips):
+                return {
+                    "track_index": ti, "slot_index": si, "is_empty": True,
+                }
+            is_midi = (ti, si) in self.session_midi_clips
+            return {
+                "track_index": ti, "slot_index": si, "is_empty": False,
+                "is_midi_clip": is_midi,
+                "warping": False if is_midi else True,
+                "warp_mode": 0 if is_midi else 4,
+                "pitch_coarse": 0, "pitch_fine": 0,
+            }
+        if op == "clip.get_session_notes":
+            return {"notes": [
+                {"pitch": 60, "start": 0.0, "duration": 1.0, "velocity": 100, "mute": False},
             ]}
         # Any setter just succeeds.
         return {"ok": True}
@@ -464,6 +521,195 @@ async def test_transpose_noop_when_keys_match(monkeypatch: pytest.MonkeyPatch) -
     result = await transpose_song(target_key="C", source_key="C")
     assert result["status"] == "noop"
     assert result["semitone_delta"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Session-view clip transposition
+# ---------------------------------------------------------------------------
+
+
+async def _wire_transpose_fakes(
+    monkeypatch: pytest.MonkeyPatch, osc: Any, bridge: Any, tmp_path: Path,
+) -> None:
+    """Common monkeypatch + no-op bounce for the session-view tests."""
+
+    async def fake_get_client():
+        return osc
+
+    def fake_get_bridge_client():
+        return bridge
+
+    async def fake_bounce(output_path, duration_sec, **_kw):
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(b"")
+        return {"copied": True, "output_path": str(output_path), "duration_sec": duration_sec}
+
+    monkeypatch.setattr("ableton_mcp.song_flow.transpose.get_client", fake_get_client)
+    monkeypatch.setattr(
+        "ableton_mcp.song_flow.transpose.get_bridge_client", fake_get_bridge_client,
+    )
+    monkeypatch.setattr(
+        "ableton_mcp.song_flow.transpose.bounce_song_via_resampling", fake_bounce,
+    )
+
+
+@pytest.mark.asyncio
+async def test_transpose_walks_session_clips_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Track 0 has 1 arrangement audio clip + 2 session clips (1 audio, 1 MIDI).
+    All three should be snapshotted and mutated."""
+    osc = _FakeOSCClient(num_tracks=1, arrangement_clips_per_track=[1])
+    bridge = _FakeBridgeClient(
+        audio_clips=[(0, 0)],
+        midi_clips=[],
+        session_audio_clips=[(0, 0)],
+        session_midi_clips=[(0, 1)],
+    )
+    await _wire_transpose_fakes(monkeypatch, osc, bridge, tmp_path)
+
+    from ableton_mcp.song_flow import transpose_song
+    result = await transpose_song(
+        target_key="D", source_key="C",
+        output_path=str(tmp_path / "out.wav"),
+    )
+    assert result["status"] == "ok"
+    # 1 arrangement audio + 1 session audio = 2 audio snapshots
+    assert result["audio_clips_transposed"] == 2
+    # 1 session MIDI = 1 midi snapshot
+    assert result["midi_clips_transposed"] == 1
+    # Verify the session-specific bridge handlers were called.
+    ops = [c[0] for c in bridge.calls]
+    assert "clip.list_session_clip_slots" in ops
+    assert "clip.get_session_pitch_state" in ops
+    assert "clip.set_session_warp" in ops
+    assert "clip.set_session_pitch" in ops
+    assert "clip.get_session_notes" in ops
+    assert "clip.set_session_notes" in ops
+
+
+@pytest.mark.asyncio
+async def test_transpose_include_session_false_skips_session_walk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """include_session=False should bypass the slot enumeration entirely."""
+    osc = _FakeOSCClient(num_tracks=1, arrangement_clips_per_track=[1])
+    bridge = _FakeBridgeClient(
+        audio_clips=[(0, 0)],
+        midi_clips=[],
+        session_audio_clips=[(0, 0)],  # exists, but should be skipped
+    )
+    await _wire_transpose_fakes(monkeypatch, osc, bridge, tmp_path)
+
+    from ableton_mcp.song_flow import transpose_song
+    result = await transpose_song(
+        target_key="D", source_key="C",
+        output_path=str(tmp_path / "out.wav"),
+        include_session=False,
+    )
+    assert result["status"] == "ok"
+    assert result["audio_clips_transposed"] == 1  # only arrangement
+    ops = [c[0] for c in bridge.calls]
+    # Slot enumeration should NOT have been called.
+    assert "clip.list_session_clip_slots" not in ops
+    assert "clip.get_session_pitch_state" not in ops
+
+
+@pytest.mark.asyncio
+async def test_transpose_handles_old_bridge_without_session_handlers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Pre-1.2.0 bridges don't have clip.list_session_clip_slots; the
+    Python side should swallow the error and continue with arrangement
+    clips only."""
+    osc = _FakeOSCClient(num_tracks=2, arrangement_clips_per_track=[1, 1])
+    bridge = _FakeBridgeClient(
+        audio_clips=[(0, 0), (1, 0)],
+        midi_clips=[],
+        list_session_raises_for_tracks={0, 1},
+    )
+    await _wire_transpose_fakes(monkeypatch, osc, bridge, tmp_path)
+
+    from ableton_mcp.song_flow import transpose_song
+    result = await transpose_song(
+        target_key="D", source_key="C",
+        output_path=str(tmp_path / "out.wav"),
+    )
+    # Should still succeed — just with arrangement clips only.
+    assert result["status"] == "ok"
+    assert result["audio_clips_transposed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_transpose_restore_replays_session_snapshots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Mutate path uses session setters; restore path also uses session
+    setters (not arrangement ones)."""
+    osc = _FakeOSCClient(num_tracks=1, arrangement_clips_per_track=[0])
+    bridge = _FakeBridgeClient(
+        audio_clips=[],
+        midi_clips=[],
+        session_audio_clips=[(0, 0)],
+    )
+    await _wire_transpose_fakes(monkeypatch, osc, bridge, tmp_path)
+
+    from ableton_mcp.song_flow import transpose_song
+    result = await transpose_song(
+        target_key="D", source_key="C",
+        output_path=str(tmp_path / "out.wav"),
+    )
+    assert result["status"] == "ok"
+    ops = [c[0] for c in bridge.calls]
+    # set_session_pitch should appear at least 2x: once to mutate, once to
+    # restore.
+    assert ops.count("clip.set_session_pitch") >= 2
+    assert ops.count("clip.set_session_warp") >= 2
+    # No arrangement setter calls (this test has no arrangement clips).
+    assert ops.count("clip.set_arrangement_pitch") == 0
+
+
+@pytest.mark.asyncio
+async def test_transpose_skips_empty_session_slots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Slots reported by list_session_clip_slots get walked one at a time;
+    if a slot's get_session_pitch_state returns is_empty=True (race
+    condition between list and snapshot), the clip is silently skipped."""
+    osc = _FakeOSCClient(num_tracks=1, arrangement_clips_per_track=[0])
+    bridge = _FakeBridgeClient(
+        audio_clips=[],
+        midi_clips=[],
+        # We claim a slot exists in the list, then the pitch_state probe
+        # returns is_empty=True because we don't register the clip.
+        session_audio_clips=[],
+    )
+
+    # Override list_session_clip_slots to claim slot 5 exists, then leave
+    # session_audio_clips empty so get_session_pitch_state reports empty.
+    real_call = bridge.call
+
+    async def call_with_phantom_slot(op: str, **kwargs: Any) -> Any:
+        if op == "clip.list_session_clip_slots":
+            return {"track_index": int(kwargs["track_index"]), "slots": [
+                {"slot_index": 5, "is_empty": False, "name": "phantom",
+                 "length": 4.0, "is_midi_clip": False,
+                 "is_audio_clip": True, "color": 0},
+            ]}
+        return await real_call(op, **kwargs)
+
+    bridge.call = call_with_phantom_slot  # type: ignore[assignment]
+    await _wire_transpose_fakes(monkeypatch, osc, bridge, tmp_path)
+
+    from ableton_mcp.song_flow import transpose_song
+    result = await transpose_song(
+        target_key="D", source_key="C",
+        output_path=str(tmp_path / "out.wav"),
+    )
+    # Should succeed without snapshotting the phantom slot.
+    assert result["status"] == "ok"
+    assert result["audio_clips_transposed"] == 0
+    assert result["midi_clips_transposed"] == 0
 
 
 # ---------------------------------------------------------------------------

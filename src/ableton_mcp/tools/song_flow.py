@@ -55,6 +55,7 @@ def register(mcp: FastMCP) -> None:
         source_key: str | None = None,
         direction: str = "auto",
         output_path: str | None = None,
+        include_session: bool = True,
     ) -> dict[str, Any]:
         """Transpose the arrangement to ``target_key`` (high quality, not chipmunk).
 
@@ -75,6 +76,11 @@ def register(mcp: FastMCP) -> None:
                        ``"up"``, or ``"down"``.
             output_path: where to write the transposed wav. Defaults to
                          ``data/song_flow/<timestamp>/transposed_<key>.wav``.
+            include_session: if True (default), also transpose every session
+                             clip slot that has a clip. Required for sets
+                             driven from Session view. Set False for
+                             arrangement-only sets to skip the bridge calls
+                             that enumerate session slots (small savings).
 
         Realtime cost: ~30 s slice bounce (only when source_key is auto)
         plus the full song bounce.
@@ -84,6 +90,7 @@ def register(mcp: FastMCP) -> None:
             source_key=source_key,
             direction=direction,
             output_path=output_path,
+            include_session=include_session,
         )
 
     @mcp.tool()

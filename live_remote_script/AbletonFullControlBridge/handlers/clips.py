@@ -35,6 +35,16 @@ EXPORTS = (
     "set_arrangement_notes",
     "create_arrangement_audio_clip",
     "list_arrangement_clips",
+    # Session-view counterparts (slot-addressed instead of arrangement-index).
+    # Used by song_flow.transpose_song(include_session=True) to walk session
+    # clip slots in addition to arrangement-view clips.
+    "get_session_pitch_state",
+    "set_session_warp",
+    "set_session_warp_mode",
+    "set_session_pitch",
+    "get_session_notes",
+    "set_session_notes",
+    "list_session_clip_slots",
     "_dir_track",
     "_probe_audio_clip_creation",
 )
@@ -242,6 +252,238 @@ def set_arrangement_notes(c_instance, track_index=None, clip_index=0,
             "notes_written": len(rows)}
 
 
+# ---------------------------------------------------------------------------
+# Session-view clip handlers — mirror the arrangement ones for session clips.
+#
+# Why these exist: song_flow.transpose_song() walks every clip in the set and
+# applies a semitone shift. It originally only handled arrangement-view clips,
+# but plenty of producers drive playback from Session view. These handlers
+# let the transpose path snapshot + mutate + restore session clips with the
+# same per-clip pattern. See song_flow/transpose.py for the caller.
+#
+# Addressing: session clips live at ``Track.clip_slots[slot_index].clip``.
+# Empty slots have ``clip=None``; we return ``is_empty=True`` so the Python
+# side knows to skip without raising.
+# ---------------------------------------------------------------------------
+
+
+def _session_clip_slot(track_index, slot_index):
+    """Resolve ``(track_index, slot_index)`` to a ClipSlot. Raises on out-of-range."""
+    track = _track(int(track_index))
+    slots = list(track.clip_slots)
+    si = int(slot_index)
+    if si < 0 or si >= len(slots):
+        raise ValueError(
+            "slot_index %d out of range; track has %d clip slots"
+            % (si, len(slots))
+        )
+    return slots[si]
+
+
+def _session_clip(track_index, slot_index):
+    """Resolve to the Clip inside the slot. Returns (clip, is_empty)."""
+    slot = _session_clip_slot(track_index, slot_index)
+    clip = getattr(slot, "clip", None)
+    if clip is None:
+        return None, True
+    return clip, False
+
+
+def list_session_clip_slots(c_instance, track_index=None, **_):
+    """Enumerate session clip slots on a track.
+
+    Returns one entry per slot (including empty ones). Empty slots have
+    ``is_empty=True`` and minimal data; populated slots include name,
+    length, color, and whether the clip is MIDI vs audio. Mirrors
+    ``list_arrangement_clips`` but slot-addressed.
+    """
+    track = _track(int(track_index))
+    slots = list(track.clip_slots)
+    out = []
+    for si, slot in enumerate(slots):
+        clip = getattr(slot, "clip", None)
+        if clip is None:
+            out.append({"slot_index": si, "is_empty": True})
+            continue
+        out.append({
+            "slot_index": si,
+            "is_empty": False,
+            "name": getattr(clip, "name", None),
+            "length": float(getattr(clip, "length", 0.0)),
+            "is_midi_clip": bool(getattr(clip, "is_midi_clip", False)),
+            "is_audio_clip": bool(getattr(clip, "is_audio_clip", False)),
+            "color": int(getattr(clip, "color", 0) or 0),
+        })
+    return {"track_index": int(track_index), "slots": out}
+
+
+def get_session_pitch_state(c_instance, track_index=None, slot_index=0, **_):
+    """Snapshot warp + pitch + clip-type state for a session clip.
+
+    Returns ``is_empty=True`` when the slot has no clip. Audio-only fields
+    return None on MIDI clips (LOM does not expose warp/pitch there).
+    """
+    clip, is_empty = _session_clip(track_index, slot_index)
+    if is_empty:
+        return {
+            "track_index": int(track_index), "slot_index": int(slot_index),
+            "is_empty": True,
+        }
+    is_midi = bool(getattr(clip, "is_midi_clip", False))
+    return {
+        "track_index": int(track_index),
+        "slot_index": int(slot_index),
+        "is_empty": False,
+        "is_midi_clip": is_midi,
+        "warping": None if is_midi else bool(getattr(clip, "warping", False)),
+        "warp_mode": None if is_midi else int(getattr(clip, "warp_mode", 0) or 0),
+        "pitch_coarse": None if is_midi else int(getattr(clip, "pitch_coarse", 0) or 0),
+        "pitch_fine": None if is_midi else int(getattr(clip, "pitch_fine", 0) or 0),
+    }
+
+
+def set_session_warp(c_instance, track_index=None, slot_index=0, value=True, **_):
+    """Toggle warping on an audio session clip. Raises if the slot is
+    empty or the clip is MIDI."""
+    clip, is_empty = _session_clip(track_index, slot_index)
+    if is_empty:
+        raise RuntimeError(
+            "slot %d on track %d is empty" % (int(slot_index), int(track_index))
+        )
+    if bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("warp is audio-only; clip is MIDI")
+    clip.warping = bool(value)
+    return {"track_index": int(track_index), "slot_index": int(slot_index),
+            "warping": bool(clip.warping)}
+
+
+def set_session_warp_mode(c_instance, track_index=None, slot_index=0, mode=5, **_):
+    """Set warp mode on an audio session clip. Mode integers same as the
+    arrangement variant (0=Beats, 1=Tones, ..., 5=Complex Pro)."""
+    clip, is_empty = _session_clip(track_index, slot_index)
+    if is_empty:
+        raise RuntimeError(
+            "slot %d on track %d is empty" % (int(slot_index), int(track_index))
+        )
+    if bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("warp_mode is audio-only; clip is MIDI")
+    clip.warp_mode = int(mode)
+    return {"track_index": int(track_index), "slot_index": int(slot_index),
+            "warp_mode": int(clip.warp_mode)}
+
+
+def set_session_pitch(c_instance, track_index=None, slot_index=0,
+                     coarse=0, fine=0, **_):
+    """Set pitch_coarse (semitones) and pitch_fine (cents) on an audio
+    session clip. Same [-48, 48] / [-50, 50] LOM limits as arrangement."""
+    clip, is_empty = _session_clip(track_index, slot_index)
+    if is_empty:
+        raise RuntimeError(
+            "slot %d on track %d is empty" % (int(slot_index), int(track_index))
+        )
+    if bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("pitch is audio-only; clip is MIDI")
+    clip.pitch_coarse = int(coarse)
+    clip.pitch_fine = int(fine)
+    return {"track_index": int(track_index), "slot_index": int(slot_index),
+            "pitch_coarse": int(clip.pitch_coarse),
+            "pitch_fine": int(clip.pitch_fine)}
+
+
+def get_session_notes(c_instance, track_index=None, slot_index=0, **_):
+    """Read all notes from a MIDI session clip. Same return shape +
+    ``get_notes_extended`` → ``get_notes`` fallback as the arrangement
+    variant. Raises on empty slot or audio clip."""
+    clip, is_empty = _session_clip(track_index, slot_index)
+    if is_empty:
+        raise RuntimeError(
+            "slot %d on track %d is empty" % (int(slot_index), int(track_index))
+        )
+    if not bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("notes are MIDI-only; clip is audio")
+    length = float(getattr(clip, "length", 0.0))
+    rows = []
+    read_err = None
+    try:
+        for n in clip.get_notes_extended(0, 128, 0.0, length):
+            rows.append({
+                "pitch": int(n.pitch),
+                "start": float(n.start_time),
+                "duration": float(n.duration),
+                "velocity": int(n.velocity),
+                "mute": bool(n.mute),
+            })
+        return {"track_index": int(track_index), "slot_index": int(slot_index),
+                "length": length, "notes": rows, "via": "get_notes_extended"}
+    except (AttributeError, TypeError) as exc:
+        read_err = exc
+    try:
+        for (p, t, d, v, m) in clip.get_notes(0.0, 0, length, 128):
+            rows.append({
+                "pitch": int(p), "start": float(t), "duration": float(d),
+                "velocity": int(v), "mute": bool(m),
+            })
+        return {"track_index": int(track_index), "slot_index": int(slot_index),
+                "length": length, "notes": rows, "via": "get_notes"}
+    except Exception as exc:
+        raise RuntimeError(
+            "could not read notes: %r (extended err: %r)" % (exc, read_err)
+        )
+
+
+def set_session_notes(c_instance, track_index=None, slot_index=0,
+                     notes=None, **_):
+    """Replace all notes on a MIDI session clip. Same write path
+    (``remove_notes_extended`` → ``add_new_notes`` → ``set_notes`` fallback)
+    as the arrangement variant."""
+    clip, is_empty = _session_clip(track_index, slot_index)
+    if is_empty:
+        raise RuntimeError(
+            "slot %d on track %d is empty" % (int(slot_index), int(track_index))
+        )
+    if not bool(getattr(clip, "is_midi_clip", False)):
+        raise RuntimeError("notes are MIDI-only; clip is audio")
+    notes = notes or []
+    length = float(getattr(clip, "length", 0.0))
+
+    rows = tuple(
+        (int(n["pitch"]), float(n["start"]), float(n["duration"]),
+         int(n["velocity"]), bool(n.get("mute", False)))
+        for n in notes
+    )
+
+    if hasattr(clip, "remove_notes_extended"):
+        try:
+            clip.remove_notes_extended(0, 128, 0.0, max(length, 0.0))
+        except Exception:
+            pass
+    elif hasattr(clip, "remove_notes"):
+        try:
+            clip.remove_notes(0.0, 0, max(length, 0.0), 128)
+        except Exception:
+            pass
+
+    write_err = None
+    written = False
+    if hasattr(clip, "add_new_notes"):
+        try:
+            clip.add_new_notes(rows)
+            written = True
+        except Exception as exc:
+            write_err = "add_new_notes: %r" % (exc,)
+    if not written and hasattr(clip, "set_notes"):
+        try:
+            clip.set_notes(rows)
+            written = True
+        except Exception as exc:
+            write_err = (write_err or "") + " | set_notes: %r" % (exc,)
+    if not written:
+        raise RuntimeError("could not write notes: %s" % write_err)
+
+    return {"track_index": int(track_index), "slot_index": int(slot_index),
+            "notes_written": len(rows)}
+
+
 def create_arrangement_audio_clip(c_instance, track_index=None, file_path=None,
                                    position=0.0, length=None, **_):
     """Create an arrangement audio clip on a track and (try to) load a wav.
@@ -411,7 +653,9 @@ def _probe_audio_clip_creation(c_instance, track_index=0, **_):
     or directly from a debug shell inside Live.
     """
     track = _track(int(track_index))
-    pub = lambda obj: sorted([m for m in dir(obj) if not m.startswith("_")])
+
+    def pub(obj):
+        return sorted([m for m in dir(obj) if not m.startswith("_")])
 
     def filtered(obj):
         return [
@@ -516,7 +760,6 @@ def reverse(c_instance, track_index=None, clip_index=None, **_):
 def _dir_track(c_instance, track_index=0, **_):
     """Debug introspection: dump methods/attrs + actual arrangement_clips state."""
     track = _track(track_index)
-    song = _song()
     slot = list(track.clip_slots)[0] if list(track.clip_slots) else None
     src = slot.clip if (slot and slot.has_clip) else None
     def public(obj):
