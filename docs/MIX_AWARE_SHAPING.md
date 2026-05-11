@@ -16,9 +16,9 @@
 | ✅ | L2.2 | `mix_masking_analyze` — which tracks mask the focal | [#25](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/25) |
 | ✅ | L3 | Mix-vocabulary descriptors (cuts_through, buried, muddy, …) | [#26](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/26) |
 | ✅ | L4.1 | `mix_propose` — structured proposal for intent | [#27](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/27) |
-| 🟡 in progress | L4.2 | `mix_apply` — push to Live (auto-insert EQ Eight) | `claude/mix-aware-shaping-l4-apply` |
+| ✅ | L4.2 | `mix_apply` — push to Live (auto-insert EQ Eight) | [#28](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/28) |
 | ⬜ | L4.3 | Region-bounded automation writes (LOM-limited; v2) | |
-| ⬜ | L5 | `mix_verify_intent` — A/B before/after | |
+| 🟡 in progress | L5 | `mix_verify_intent` — A/B before/after | `claude/mix-aware-shaping-l5-verify` |
 | ⬜ | KB | Money-bands + masking rules data file | |
 
 Legend: ⬜ not started · 🟡 in progress · ✅ merged
