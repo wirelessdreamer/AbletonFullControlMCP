@@ -95,11 +95,20 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def op_reverse_clip(track_index: int, clip_index: int) -> dict[str, Any]:
-        """Reverse an audio clip.
+        """Reverse a clip.
 
-        Live 11's Python LOM does not expose Clip reverse — it's a UI-only
-        command. The bridge tries a few likely method names and falls back to
-        returning `supported=false` with a workaround hint.
+        - **MIDI clips**: fully supported. Reads every note, inverts each
+          note's start time (``new_start = clip_length - old_start -
+          duration``), writes the result back. Velocity, duration, pitch,
+          and mute flags are preserved.
+        - **Audio clips**: Live 11's Python LOM does not expose
+          ``Clip.reverse()`` — it's a UI-only command. Returns
+          ``supported=false`` with a workaround in the ``workaround``
+          field (right-click + Reverse in Live, or render an offline-
+          reversed wav and re-import).
+
+        The reply includes a ``kind`` field (``"midi"`` or ``"audio"``)
+        so callers can route based on clip type.
         """
         return await _call("clip.reverse", track_index=int(track_index), clip_index=int(clip_index))
 
@@ -124,11 +133,35 @@ def register(mcp: FastMCP) -> None:
     async def op_slice_clip_to_midi(
         track_index: int, clip_index: int, slicing_preset: str = "16th"
     ) -> dict[str, Any]:
-        """Slice an audio clip into a Drum Rack with one pad per slice. (UI-only in Live's API.)"""
+        """Slice an audio clip into a Drum Rack with one pad per slice.
+
+        Live 11/12's Python LOM does NOT expose this — ``Slice to New MIDI
+        Track`` is a UI command that internally creates a new MIDI track,
+        a Drum Rack with one Simpler per slice point, and a MIDI clip
+        triggering each pad. There's no LOM hook.
+
+        Workarounds:
+
+        1. **Manual** — right-click the audio clip in Live and pick "Slice
+           to New MIDI Track". Use the slicing preset of your choice in
+           the dialog (1/4 / 1/8 / 1/16 / transients / beats / regions).
+        2. **Programmatic (more work)** — run onset detection externally
+           (e.g. ``librosa.onset.onset_detect`` for transient slicing),
+           create a new MIDI track via ``track_create_midi``, build a
+           Drum Rack with N Simpler pads each pointing at a slice region
+           of the source wav (via ``browser_load_device`` +
+           ``browser_load_sample``), then write a MIDI clip with one
+           note per pad triggered at the slice point. Heavy but possible
+           today with existing MCP tools.
+        3. **Max for Live** — devices like Ableton's own Slice or
+           third-party slicers can do this without leaving Live.
+        """
         return _stub(
             "slice_clip_to_midi",
-            "Live's Python API does not expose 'Slice to New MIDI Track'. "
-            "Right-click the clip and choose 'Slice to New MIDI Track', or use a Max for Live device.",
+            "Slice to New MIDI Track is UI-only in Live 11/12. See the "
+            "tool docstring for three workarounds: manual UI command, "
+            "programmatic via onset detection + Drum Rack + Simpler, or "
+            "Max for Live slicing devices.",
             track_index=track_index,
             clip_index=clip_index,
             slicing_preset=slicing_preset,
@@ -136,9 +169,32 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def op_new_set() -> dict[str, Any]:
-        """Create a new empty Live Set. (UI-only — would prompt to save current.)"""
+        """Create a new empty Live Set.
+
+        Live's Python LOM does NOT expose ``Application.create_new_set``
+        or any equivalent. Creating a new set is a UI-only File menu
+        operation on every Live version through 11.3. Live 12 hasn't
+        added a LOM hook either.
+
+        Workarounds:
+
+        1. **Manual** — File → New Live Set (Ctrl/Cmd-N).
+        2. **AppleScript / pywinauto** — drive the menu from outside Live.
+           Brittle, breaks across UI updates, and Live doesn't expose a
+           stable handle. Not recommended.
+        3. **Set template** — save a baseline empty .als and use Live's
+           "Default Set" preference so new sets start clean. One-time setup,
+           then File → New Live Set behaves like our `new_set` would.
+
+        Closest LOM-supported alternative for "give me a fresh canvas":
+        ``op_save_set`` (save current), then manually New Live Set, then
+        come back to MCP control. Or just delete every track in the
+        current set via ``track_delete`` in a loop — same effective state.
+        """
         return _stub(
             "new_set",
-            "Live's Python API does not expose Application.create_new_set. "
-            "Use File → New Live Set in the UI.",
+            "Application.create_new_set is not exposed in Live's Python LOM. "
+            "Use File → New Live Set in the UI, or delete every track in "
+            "the current set via track_delete to get a fresh canvas. "
+            "See the tool docstring for the full workaround list.",
         )

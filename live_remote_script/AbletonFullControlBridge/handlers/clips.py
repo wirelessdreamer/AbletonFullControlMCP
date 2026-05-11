@@ -731,29 +731,134 @@ def crop(c_instance, track_index=None, clip_index=None, **_):
 
 
 def reverse(c_instance, track_index=None, clip_index=None, **_):
-    """Reverse an audio clip.
+    """Reverse a clip.
 
-    Live 11's Python LOM does NOT expose a `Clip.reverse()` method — reverse is
-    a UI-only command. We attempt a few likely API names; if none exist we
-    return a structured `not_supported` result so the MCP server can surface a
-    helpful workaround message rather than a hard exception.
+    - **MIDI clip** — supported. Reads every note, inverts each note's
+      start time (``new_start = clip_length - old_start - duration``),
+      and writes the result back. The clip ends up rhythmically mirrored
+      (the last beat of the original plays first). Velocity, duration,
+      pitch, and mute are preserved.
+    - **Audio clip** — Live 11's Python LOM does NOT expose
+      ``Clip.reverse()``; it's a UI-only command. We try a few likely
+      method names in case a future Live build adds one. If none exists,
+      we return ``supported=False`` with a workaround pointing at the
+      UI command and the offline-reverse alternative.
     """
-    clip = _clip(int(track_index), int(clip_index))
+    ti = int(track_index)
+    ci = int(clip_index)
+    clip = _clip(ti, ci)
+    if bool(getattr(clip, "is_midi_clip", False)):
+        return _reverse_midi_clip(ti, ci, clip)
+    # Audio path: try LOM methods first (none currently exist on Live 11).
     for attr in ("reverse", "reverse_audio", "reverse_warp"):
         fn = getattr(clip, attr, None)
         if callable(fn):
             try:
                 fn()
-                return {"track_index": int(track_index), "clip_index": int(clip_index),
-                        "reversed": True, "via": attr}
+                return {"track_index": ti, "clip_index": ci,
+                        "reversed": True, "via": attr, "kind": "audio"}
             except Exception:
                 continue
     return {
-        "track_index": int(track_index),
-        "clip_index": int(clip_index),
+        "track_index": ti,
+        "clip_index": ci,
         "reversed": False,
         "supported": False,
-        "workaround": "Right-click the clip in Live and choose 'Reverse', or use a Max for Live device.",
+        "kind": "audio",
+        "workaround": (
+            "Audio clip reverse is UI-only in Live 11. Right-click the clip "
+            "in Live and choose 'Reverse', or render the clip to a new wav "
+            "with the samples reversed offline (e.g. via numpy or sox) and "
+            "drag that back in. MIDI clips reverse automatically through "
+            "this handler."
+        ),
+    }
+
+
+def _reverse_midi_clip(ti, ci, clip):
+    """Read every note, invert its start time, write the result back.
+
+    Helper for the ``reverse`` handler. Kept separate so the audio path
+    stays readable.
+    """
+    length = float(getattr(clip, "length", 0.0))
+    if length <= 0:
+        return {
+            "track_index": ti, "clip_index": ci,
+            "reversed": False, "supported": False, "kind": "midi",
+            "reason": "clip has zero length",
+        }
+
+    # Read with the same get_notes_extended → get_notes fallback chain
+    # used by get_arrangement_notes.
+    notes = []
+    read_err = None
+    try:
+        for n in clip.get_notes_extended(0, 128, 0.0, length):
+            notes.append((
+                int(n.pitch), float(n.start_time), float(n.duration),
+                int(n.velocity), bool(n.mute),
+            ))
+    except (AttributeError, TypeError) as exc:
+        read_err = exc
+        try:
+            for (p, t, d, v, m) in clip.get_notes(0.0, 0, length, 128):
+                notes.append((int(p), float(t), float(d), int(v), bool(m)))
+        except Exception as exc2:
+            return {
+                "track_index": ti, "clip_index": ci,
+                "reversed": False, "supported": False, "kind": "midi",
+                "reason": "could not read notes: %r (extended err: %r)" % (exc2, read_err),
+            }
+
+    # Invert each note's start time. A note at (start=t, duration=d) in a
+    # length-L clip becomes (start=L-t-d, duration=d) after reversal —
+    # the rightmost edge of the original note lines up with the leftmost
+    # edge of the reversed note. Clamp negative starts to 0 (a note that
+    # ran past the clip end gets pinned at the new beginning).
+    reversed_notes = tuple(
+        (p, max(0.0, length - t - d), d, v, m)
+        for (p, t, d, v, m) in notes
+    )
+
+    # Remove existing notes + write reversed using the same fallback as
+    # set_arrangement_notes.
+    if hasattr(clip, "remove_notes_extended"):
+        try:
+            clip.remove_notes_extended(0, 128, 0.0, length)
+        except Exception:
+            pass
+    elif hasattr(clip, "remove_notes"):
+        try:
+            clip.remove_notes(0.0, 0, length, 128)
+        except Exception:
+            pass
+
+    write_err = None
+    if hasattr(clip, "add_new_notes"):
+        try:
+            clip.add_new_notes(reversed_notes)
+            return {
+                "track_index": ti, "clip_index": ci,
+                "reversed": True, "via": "midi-notes-extended",
+                "kind": "midi", "note_count": len(reversed_notes),
+            }
+        except Exception as exc:
+            write_err = "add_new_notes: %r" % (exc,)
+    if hasattr(clip, "set_notes"):
+        try:
+            clip.set_notes(reversed_notes)
+            return {
+                "track_index": ti, "clip_index": ci,
+                "reversed": True, "via": "midi-notes-set",
+                "kind": "midi", "note_count": len(reversed_notes),
+            }
+        except Exception as exc:
+            write_err = (write_err or "") + " | set_notes: %r" % (exc,)
+    return {
+        "track_index": ti, "clip_index": ci,
+        "reversed": False, "supported": False, "kind": "midi",
+        "reason": "could not write reversed notes: %s" % write_err,
     }
 
 
