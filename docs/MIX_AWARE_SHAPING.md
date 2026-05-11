@@ -13,8 +13,8 @@
 | ⬜ | L1.2b | Section detection (audio-based, RMS) — follow-up | |
 | ✅ | L1.3 | `region_bounce_all_active` wrapper | [#23](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/23) |
 | ✅ | L2.1 | `mix_spectrum_at_region` — per-track band energy | [#24](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/24) |
-| 🟡 in progress | L2.2 | `mix_masking_analyze` — which tracks mask the focal | `claude/mix-aware-shaping-l2-masking` |
-| ⬜ | L3 | Mix-vocabulary descriptors (cuts_through, buried, muddy, …) | |
+| ✅ | L2.2 | `mix_masking_analyze` — which tracks mask the focal | [#25](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/25) |
+| 🟡 in progress | L3 | Mix-vocabulary descriptors (cuts_through, buried, muddy, …) | `claude/mix-aware-shaping-l3-descriptors` |
 | ⬜ | L4.1 | `mix_propose` — structured proposal for intent | |
 | ⬜ | L4.2 | `mix_apply` — push to Live (auto-insert EQ Eight) | |
 | ⬜ | L4.3 | Region-bounded automation writes (LOM-limited; v2) | |
