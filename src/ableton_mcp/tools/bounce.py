@@ -20,8 +20,11 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..bounce import (
+    FreezeBounceError,
+    bounce_enabled_via_freeze,
     bounce_enabled_via_resampling,
     bounce_song_via_resampling,
+    bounce_tracks_via_freeze,
     bounce_tracks_via_resampling,
     encode_wav_to_mp3,
     mix_stems_to_master,
@@ -88,30 +91,60 @@ def register(mcp: FastMCP) -> None:
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
         warmup_sec: float = 0.0,
+        mode: str = "resampling",
+        keep_frozen: bool = False,
     ) -> dict[str, Any]:
-        """Bounce specific tracks to per-track wav stems in ONE realtime pass.
+        """Bounce specific tracks to per-track wav stems.
 
-        Live records all listed tracks in parallel during a single playback
-        pass — wall-clock is ``duration_sec`` regardless of how many tracks.
-        For each source track, a temp audio track is created with input
-        routed to that source, armed, recorded; the resulting wav is copied
-        to ``output_dir/stem_<idx>_<name>.wav`` and the temp track deleted.
+        Two pipelines, picked via ``mode``:
 
-        Set ``include_master=True`` to also capture the master mix in the
-        same pass (extra resampling track).
+        - ``mode="resampling"`` (default) — realtime, one playback pass.
+          Live records all listed tracks in parallel during a single
+          playback pass; wall-clock is ``duration_sec`` regardless of
+          track count. Captures each track's post-master-bus signal via a
+          Resampling track. ``duration_sec`` and ``warmup_sec`` apply.
+        - ``mode="freeze"`` — offline via ``Track.freeze()``, faster than
+          realtime (~2-4× on a modern machine). Per-track wavs come
+          straight out of Live's ``Samples/Freezing/`` folder.
+          ``duration_sec`` is ignored (Live writes whatever length the
+          track's clips span). Master-bus FX are NOT in the output —
+          freeze captures pre-master signal. Requires the project to be
+          saved (Live needs ``<project>/Samples/Freezing/``).
+          ``keep_frozen=True`` leaves tracks frozen after the bounce;
+          default unfreezes them to restore session state.
 
-        ``warmup_sec`` runs a brief no-record playback before the real
-        capture to prime samplers + the audio engine. Use 0.3-0.5 s if your
-        first bounce of a fresh session shows silent leading audio.
+        Set ``include_master=True`` to also capture the master mix.
+        ``include_master`` is only honored when ``mode="resampling"`` —
+        freeze has no master equivalent.
         """
+        if mode not in ("resampling", "freeze"):
+            return {
+                "status": "error",
+                "error": f"unknown mode {mode!r}; must be 'resampling' or 'freeze'",
+            }
         try:
-            r = await bounce_tracks_via_resampling(
-                track_indices, output_dir, duration_sec,
-                include_master=include_master,
-                warmup_sec=warmup_sec,
-            )
+            if mode == "freeze":
+                if include_master:
+                    return {
+                        "status": "error",
+                        "error": "include_master is not supported with mode='freeze' "
+                                 "(freeze captures per-track pre-master signal only). "
+                                 "Use mode='resampling' for a master-aware bounce.",
+                    }
+                r = await bounce_tracks_via_freeze(
+                    track_indices, output_dir,
+                    keep_frozen=keep_frozen,
+                )
+            else:
+                r = await bounce_tracks_via_resampling(
+                    track_indices, output_dir, duration_sec,
+                    include_master=include_master,
+                    warmup_sec=warmup_sec,
+                )
+        except FreezeBounceError as e:
+            return {"status": "error", "error": str(e), "mode": mode}
         except Exception as e:
-            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+            return {"status": "error", "error": f"{type(e).__name__}: {e}", "mode": mode}
         if encode_mp3:
             r["mp3s"] = []
             for s in r.get("stems", []):
@@ -144,26 +177,53 @@ def register(mcp: FastMCP) -> None:
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
         warmup_sec: float = 0.5,
+        mode: str = "resampling",
+        keep_frozen: bool = False,
     ) -> dict[str, Any]:
-        """Bounce every un-muted track (+ master) as separate stems in one pass.
+        """Bounce every un-muted track (+ optionally master) as separate stems.
 
-        Convenience wrapper: queries every track's mute state, skips muted
-        ones and tracks without audio output, then runs bounce_tracks on the
-        rest. ``include_master=True`` adds a Resampling track for the full mix.
+        Two pipelines, picked via ``mode``:
 
-        ``warmup_sec`` defaults to 0.5 here (higher than the other bounce_*
-        tools) because this entrypoint is most often used on fresh sessions
-        — exactly where the first-bounce-of-fresh-sampler silence bug
-        bites hardest. Set to 0 to disable.
+        - ``mode="resampling"`` (default) — realtime, one playback pass.
+          ``warmup_sec`` defaults to 0.5 s here to prime samplers on
+          fresh sessions. ``include_master=True`` adds a Resampling
+          track for the full mix.
+        - ``mode="freeze"`` — offline via ``Track.freeze()``, faster than
+          realtime. ``duration_sec`` is ignored. ``include_master`` is
+          not supported (freeze has no master equivalent). Requires the
+          project to be saved. ``keep_frozen=True`` leaves tracks frozen
+          after the bounce.
+
+        Queries every track's mute state, skips muted ones and tracks
+        without audio output, then runs the chosen pipeline on the rest.
         """
+        if mode not in ("resampling", "freeze"):
+            return {
+                "status": "error",
+                "error": f"unknown mode {mode!r}; must be 'resampling' or 'freeze'",
+            }
         try:
-            r = await bounce_enabled_via_resampling(
-                output_dir, duration_sec,
-                include_master=include_master,
-                warmup_sec=warmup_sec,
-            )
+            if mode == "freeze":
+                if include_master:
+                    return {
+                        "status": "error",
+                        "error": "include_master is not supported with mode='freeze' "
+                                 "(freeze captures per-track pre-master signal only). "
+                                 "Use mode='resampling' for a master-aware bounce.",
+                    }
+                r = await bounce_enabled_via_freeze(
+                    output_dir, keep_frozen=keep_frozen,
+                )
+            else:
+                r = await bounce_enabled_via_resampling(
+                    output_dir, duration_sec,
+                    include_master=include_master,
+                    warmup_sec=warmup_sec,
+                )
+        except FreezeBounceError as e:
+            return {"status": "error", "error": str(e), "mode": mode}
         except Exception as e:
-            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+            return {"status": "error", "error": f"{type(e).__name__}: {e}", "mode": mode}
         if encode_mp3:
             r["mp3s"] = []
             for s in r.get("stems", []):
