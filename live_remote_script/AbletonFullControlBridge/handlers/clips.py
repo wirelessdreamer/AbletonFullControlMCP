@@ -34,6 +34,8 @@ EXPORTS = (
     "get_arrangement_notes",
     "set_arrangement_notes",
     "create_arrangement_audio_clip",
+    "create_arrangement_midi_clip",
+    "move_arrangement_clip",
     "list_arrangement_clips",
     # Session-view counterparts (slot-addressed instead of arrangement-index).
     # Used by song_flow.transpose_song(include_session=True) to walk session
@@ -482,6 +484,112 @@ def set_session_notes(c_instance, track_index=None, slot_index=0,
 
     return {"track_index": int(track_index), "slot_index": int(slot_index),
             "notes_written": len(rows)}
+
+
+def create_arrangement_midi_clip(c_instance, track_index=None,
+                                  position=0.0, length=4.0, **_):
+    """Create an empty MIDI clip on the arrangement timeline.
+
+    Live 11+ exposes ``Track.create_midi_clip(start, end)`` — both args
+    in beats. End-start gives the clip length. Returns the new clip's
+    arrangement index so the caller can address it for subsequent
+    ``set_arrangement_notes`` / ``move_arrangement_clip`` calls.
+
+    Constraints (enforced by Live):
+    - The track must be a MIDI track (raises on audio tracks).
+    - The position range must not overlap an existing clip on that track
+      (Live's LOM rejects overlap with a noisy error).
+    - position must be >= 0, length must be > 0.
+    """
+    ti = int(track_index)
+    pos = float(position)
+    length_f = float(length)
+    if pos < 0:
+        raise ValueError("position must be >= 0 (got %r)" % pos)
+    if length_f <= 0:
+        raise ValueError("length must be > 0 (got %r)" % length_f)
+
+    track = _track(ti)
+    create = getattr(track, "create_midi_clip", None)
+    if create is None:
+        raise RuntimeError(
+            "Track.create_midi_clip not available in this Live version "
+            "(needs Live 11+)"
+        )
+    # Live 11.3+ takes (start, end), not (start, length). Compute end.
+    pre_count = len(list(track.arrangement_clips))
+    new_clip = create(pos, pos + length_f)
+    # Find the new clip's index in arrangement_clips. Live may not return
+    # the clip object directly in all versions; iterate to find it.
+    post_clips = list(track.arrangement_clips)
+    new_index = len(post_clips) - 1  # newest is last by default
+    # Sanity: prefer the clip whose start_time matches `pos`.
+    for i, c in enumerate(post_clips):
+        if abs(float(getattr(c, "start_time", -1.0)) - pos) < 1e-6:
+            new_index = i
+            break
+    return {
+        "track_index": ti,
+        "clip_index": int(new_index),
+        "position": pos,
+        "length": length_f,
+        "end": pos + length_f,
+        "name": getattr(new_clip, "name", None) if new_clip is not None else None,
+        "pre_count": pre_count,
+        "post_count": len(post_clips),
+        "created": True,
+    }
+
+
+def move_arrangement_clip(c_instance, track_index=None, clip_index=0,
+                           new_position=0.0, **_):
+    """Move an arrangement clip to a new start position.
+
+    Live 11+ exposes ``Clip.move(beats_delta)`` (relative move) but NOT
+    ``Clip.start_time = ...`` (read-only property). We compute the delta
+    from the current ``start_time`` and call ``move``.
+
+    Falls back to setting ``start_marker`` if ``move`` isn't available,
+    though that's a different semantic (changes the loop region rather
+    than the clip's position on the timeline).
+    """
+    ti = int(track_index)
+    ci = int(clip_index)
+    new_pos = float(new_position)
+    if new_pos < 0:
+        raise ValueError("new_position must be >= 0 (got %r)" % new_pos)
+
+    clip = _arrangement_clip(ti, ci)
+    old_pos = float(getattr(clip, "start_time", 0.0))
+    delta = new_pos - old_pos
+
+    move = getattr(clip, "move", None)
+    if callable(move):
+        try:
+            move(delta)
+            actual = float(getattr(clip, "start_time", new_pos))
+            return {
+                "track_index": ti, "clip_index": ci,
+                "old_position": old_pos, "new_position": actual,
+                "requested_position": new_pos, "delta_beats": delta,
+                "via": "Clip.move", "moved": True,
+            }
+        except Exception as exc:
+            move_err = repr(exc)
+    else:
+        move_err = "Clip.move not available"
+    return {
+        "track_index": ti, "clip_index": ci,
+        "old_position": old_pos, "requested_position": new_pos,
+        "delta_beats": delta,
+        "moved": False, "supported": False,
+        "error": move_err,
+        "workaround": (
+            "Live's LOM didn't accept the move call. Either upgrade Live "
+            "(Clip.move was added in 11.0; signature stable through 12), "
+            "or move the clip manually in the arrangement view."
+        ),
+    }
 
 
 def create_arrangement_audio_clip(c_instance, track_index=None, file_path=None,

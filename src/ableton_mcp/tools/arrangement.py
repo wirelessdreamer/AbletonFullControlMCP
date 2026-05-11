@@ -1,4 +1,13 @@
-"""Arrangement view: clips placed on the linear timeline."""
+"""Arrangement view: clips placed on the linear timeline.
+
+Includes:
+
+- ``arrangement_clips_list`` / ``arrangement_summary`` — read tools.
+- ``arrangement_insert_midi_clip`` / ``arrangement_move_clip`` — write
+  tools that go through the bridge (require AbletonFullControlBridge
+  1.4.0+; the version handshake from PR #11 surfaces an actionable
+  warning at first use on older bridges).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +15,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from ..bridge_client import AbletonBridgeError, get_bridge_client
 from ..osc_client import get_client
 
 
@@ -67,3 +77,82 @@ def register(mcp: FastMCP) -> None:
             "num_scenes": int(await g("/live/song/get/num_scenes")),
             "current_song_time": float(await g("/live/song/get/current_song_time")),
         }
+
+    @mcp.tool()
+    async def arrangement_insert_midi_clip(
+        track_index: int,
+        position_beats: float,
+        length_beats: float = 4.0,
+    ) -> dict[str, Any]:
+        """Create an empty MIDI clip on the arrangement timeline.
+
+        - ``track_index`` must point to a MIDI track. Audio tracks raise.
+        - ``position_beats`` is the start position in beats (0-based).
+          Negative values are rejected.
+        - ``length_beats`` is the clip length in beats (default 4 = one bar in 4/4).
+
+        Live's LOM rejects overlapping clips on the same track, so the
+        target [position, position+length] range must not intersect any
+        existing arrangement clip on that track. We surface Live's error
+        as ``status="error"`` rather than raising.
+
+        Returns the new clip's ``clip_index`` so the caller can follow
+        up with ``clip_*`` setters (e.g. notes, color, name) via the
+        existing arrangement-clip tool surface.
+
+        Requires bridge version 1.4.0+; older bridges raise
+        :class:`AbletonBridgeOutdated` with the install hint via the
+        handshake added in PR #11.
+        """
+        bridge = get_bridge_client()
+        try:
+            await bridge.require_handler("clip.create_arrangement_midi_clip")
+        except Exception as exc:
+            return {"status": "error", "error": str(exc), "stage": "version_check"}
+        try:
+            result = await bridge.call(
+                "clip.create_arrangement_midi_clip",
+                track_index=int(track_index),
+                position=float(position_beats),
+                length=float(length_beats),
+            )
+        except AbletonBridgeError as exc:
+            return {"status": "error", "error": str(exc), "stage": "create"}
+        return {"status": "ok", **result}
+
+    @mcp.tool()
+    async def arrangement_move_clip(
+        track_index: int,
+        clip_index: int,
+        new_position_beats: float,
+    ) -> dict[str, Any]:
+        """Move an arrangement clip to a new start position on the timeline.
+
+        Live 11+ exposes ``Clip.move(beats_delta)`` as the only way to
+        relocate a clip — we compute the delta from the current
+        ``start_time`` and call it. The result includes the actual
+        post-move position (Live may snap to grid quantization).
+
+        Live's LOM rejects moves that would overlap an existing clip on
+        the same track; we surface that as ``status="error"``.
+
+        Requires bridge version 1.4.0+ (Live 11+ in turn, where
+        ``Clip.move`` exists).
+        """
+        bridge = get_bridge_client()
+        try:
+            await bridge.require_handler("clip.move_arrangement_clip")
+        except Exception as exc:
+            return {"status": "error", "error": str(exc), "stage": "version_check"}
+        try:
+            result = await bridge.call(
+                "clip.move_arrangement_clip",
+                track_index=int(track_index),
+                clip_index=int(clip_index),
+                new_position=float(new_position_beats),
+            )
+        except AbletonBridgeError as exc:
+            return {"status": "error", "error": str(exc), "stage": "move"}
+        if not result.get("moved"):
+            return {"status": "error", **result}
+        return {"status": "ok", **result}
