@@ -23,7 +23,9 @@
 
 Legend: ⬜ not started · 🟡 in progress · ✅ merged
 
-**Status: Core build-out (L1–L5 + KB) complete.** A user can now say *"the lead guitar doesn't cut through during the solo"* and the MCP can locate the section, diagnose masking, propose EQ moves with rationales, apply them (auto-inserting EQ Eight when needed), and verify the intent was achieved by diffing before/after spectra. The two follow-ups (L1.2b audio-based section detection, L4.3 region-bounded automation) are unblocking the next round of improvements but aren't on the critical path for the core conversational loop.
+**Status: Core build-out (L1–L5 + KB) complete + MCP tools registered.** A user can now say *"the lead guitar doesn't cut through during the solo"* and the MCP can locate the section, diagnose masking, propose EQ moves with rationales, apply them (auto-inserting EQ Eight when needed), and verify the intent was achieved by diffing before/after spectra. The L2-L5 modules are exposed as MCP tools under the `mix_*` prefix ([PR #32](https://github.com/wirelessdreamer/AbletonFullControlMCP/pull/32)). The two follow-ups (L1.2b audio-based section detection, L4.3 region-bounded automation) are unblocking the next round of improvements but aren't on the critical path for the core conversational loop.
+
+**Next step**: real-Live smoke test — see [`MIX_AWARE_SHAPING_SMOKE_TEST.md`](MIX_AWARE_SHAPING_SMOKE_TEST.md). 635 unit tests are green against mocks; the smoke test surfaces OSC-side reality (EQ Eight parameter naming, bounce timing, Live version compat) that mocks can't catch.
 
 ---
 
