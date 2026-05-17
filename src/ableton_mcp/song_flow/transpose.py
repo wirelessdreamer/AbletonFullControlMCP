@@ -38,9 +38,22 @@ log = logging.getLogger(__name__)
 PITCH_COARSE_MIN = -48
 PITCH_COARSE_MAX = 48
 
-# 5 = Complex Pro in Live 11. The plan's "high quality, not chipmunk"
-# requirement maps directly to this mode.
-WARP_MODE_COMPLEX_PRO = 5
+# Complex Pro is the high-quality pitch-preserving warp mode required by
+# the "not chipmunk" transpose. The enum value differs across Live builds
+# (and Live editions): Live 11 Suite 11.3.43 uses 6 (slot 5 is REX, an
+# unlicensed format that raises "Invalid warp mode" if you try to set
+# it). Older / different Live builds may use 5.
+#
+# We default to 6 because that's what every probe on a current Live 11
+# Suite install returns. The bridge handler `clip.set_arrangement_warp_mode`
+# raises a clean RuntimeError if Live rejects the value, so a mismatched
+# build will fail loudly rather than silently produce bad audio.
+#
+# Long-term TODO: probe the valid range at startup via a new bridge
+# handler that calls `clip.warp_mode = candidate` on a throwaway clip and
+# remembers the highest accepted value (Complex Pro is always the last
+# entry in Live's enum). For now, the constant covers the common case.
+WARP_MODE_COMPLEX_PRO = 6
 
 
 @dataclass
