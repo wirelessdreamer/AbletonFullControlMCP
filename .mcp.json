@@ -7,6 +7,14 @@
         "-m",
         "ableton_mcp"
       ]
+    },
+    "audio_downloader": {
+      "type": "stdio",
+      "command": "D:/Code/AbletonFullControlMCP/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "audio_downloader_mcp"
+      ]
     }
   }
 }

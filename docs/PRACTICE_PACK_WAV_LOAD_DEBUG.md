@@ -1,8 +1,38 @@
-# `song_load_wav_to_arrangement` confirmed broken on Live 11.3.43
+# `song_load_wav_to_arrangement` on Live 11.3.43 — LOM broken; .als synthesis works
 
-**Status:** CONFIRMED Live LOM limitation. `Track.create_audio_clip` on Live 11.3.43 cannot programmatically load a wav from an absolute path. Verified across: (a) original session, (b) Live restart, (c) full system reboot, (d) fresh empty Live Set on a fresh boot. Same probe errors every time.
+**Status:** RESOLVED via `.als` file synthesis. The original LOM path (`Track.create_audio_clip(file_path)`) is broken on Live 11.3.43 — confirmed across multiple environment resets. Several alternative auto-load paths were investigated. **`ableton_mcp.local_automation.als_synth.synthesize_als`** is the validated, deterministic solution: build a valid `.als` Live Set file with audio clips pre-loaded, then `os.startfile` open it in Live. End-to-end smoke-tested against real Live 11.3.43 — opens cleanly with N tracks each containing the requested wav.
 
-**Resolution:** SKILL.md updated to require a manual drag step on Live 11.3.x. Auto-load remains in the codebase for future Live builds (12.x, or any 11.3.x point release that adds the missing C++ binding) — the bridge probe table will pick it up automatically when Live exposes a working signature.
+Trade-off: opening a synthesized `.als` replaces the active Live session. Acceptable for batch processing where the synthesized set IS the working session.
+
+## Path summary (research outcomes)
+
+| Path | Status | Notes |
+|---|---|---|
+| Live LOM `Track.create_audio_clip(fp, pos)` | ❌ Broken | Returns None on Live 11.3.43; all 3 probe variants fail. Not a bridge bug — Live LOM limitation. |
+| Browser load (`browser.load_sample` → `duplicate_clip_to_arrangement`) | ❌ Not viable | Live's user-library browser doesn't index new files without UI interaction; no LOM refresh API. Plus `duplicate_clip_to_arrangement` for audio clips uncertain on this build. |
+| WM_DROPFILES | ❌ Not viable | Live's main window doesn't have `WS_EX_ACCEPTFILES` style; the message is silently ignored. |
+| OLE DoDragDrop (proper Windows shell drag-drop) | ⚠️ Parked | Returns E_FAIL before entering modal loop. Root cause: Python script threads don't have window-anchored message pumps the shell expects. Solving needs ~6-8h of hidden-window + message-loop infrastructure. Module preserved at `src/ableton_mcp/local_automation/ole_dragdrop.py` as research material. |
+| **`.als` synthesis** | ✅ **Validated** | `src/ableton_mcp/local_automation/als_synth.py`. Build XML, gzip, open. 100% deterministic. |
+
+## `.als` synthesis — what made it work
+
+Four debug iterations to get a valid file:
+
+| Version | Live error | Fix |
+|---|---|---|
+| v1 | "non-unique Pointee IDs" | Renumber every Id ≥ `_GLOBAL_ID_THRESHOLD` (100) per cloned track, rewrite reference Value attributes via mapping |
+| v2 | "NextPointeeId is too low: 23041 must be bigger than 23136" | Bump every `<Next*Id Value="...">` field to one greater than the max ID actually used in the document |
+| v3 | "Return tracks out of order" | Insert new AudioTracks BEFORE the first ReturnTrack in the `Tracks` container, not at the end |
+| **v4** | **(loaded cleanly)** | — |
+
+Each Live-side error pointed exactly at the next schema constraint to satisfy. The synthesizer module's unit tests (`tests/test_als_synth.py`) regress every one of those fixes.
+
+## What was kept in-tree
+
+- `src/ableton_mcp/local_automation/als_synth.py` — validated synthesizer
+- `src/ableton_mcp/local_automation/ole_dragdrop.py` — OLE attempt, parked
+- `src/ableton_mcp/local_automation/__init__.py` — package surface
+- `tests/test_als_synth.py` — regression tests for v1-v4 fixes
 
 ## What we observed (2026-05-12 session)
 
