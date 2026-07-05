@@ -70,8 +70,8 @@ def install(force: bool = False, dry_run: bool = False) -> Path:
     print(f"Installed AbletonFullControlBridge to {target}")
     print()
     print("Next:")
-    print("  1. Open Ableton Live → Preferences → Link/Tempo/MIDI →")
-    print("     Control Surface dropdown → choose AbletonFullControlBridge.")
+    print("  1. Open Ableton Live -> Preferences -> Link/Tempo/MIDI ->")
+    print("     Control Surface dropdown -> choose AbletonFullControlBridge.")
     print("  2. You should see a status-bar message confirming it's listening on TCP/11002.")
     print("  3. AbletonFullControlBridge runs ALONGSIDE AbletonOSC — keep both control surfaces enabled.")
     return target

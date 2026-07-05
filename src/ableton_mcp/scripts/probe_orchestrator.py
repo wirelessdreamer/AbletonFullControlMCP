@@ -189,7 +189,7 @@ def probe_one_synth(
     db_path = output_dir / f"{synth_name}.sqlite"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     log.info(
-        "probing %s: %d cells across %d params → %s",
+        "probing %s: %d cells across %d params -> %s",
         synth_name,
         n_cells,
         len(swept),
