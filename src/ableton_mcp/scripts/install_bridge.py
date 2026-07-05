@@ -8,8 +8,12 @@ Usage:
 Mirror of `install_abletonosc.py` but copies a local directory shipped with this
 package (no network round-trip) into:
 
-    Windows:   %USERPROFILE%\\Documents\\Ableton\\User Library\\Remote Scripts\\AbletonFullControlBridge
-    macOS:     ~/Music/Ableton/User Library/Remote Scripts/AbletonFullControlBridge
+    <User Library>/Remote Scripts/AbletonFullControlBridge
+
+The User Library defaults to ~/Documents/Ableton/User Library (Windows) or
+~/Music/Ableton/User Library (macOS) but can be relocated in Live's
+preferences; we resolve the real location from Live's Library.cfg (see
+live_paths.py).
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .install_abletonosc import user_library_remote_scripts
+from .live_paths import user_library_remote_scripts
 
 
 def _bridge_source_dir() -> Path:

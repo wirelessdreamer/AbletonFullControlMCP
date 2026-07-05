@@ -17,30 +17,23 @@ Usage:
 
 Manual fallback (if you'd rather):
     git clone https://github.com/ideoforms/AbletonOSC.git \
-        "%USERPROFILE%/Documents/Ableton/User Library/Remote Scripts/AbletonOSC"
+        "<your User Library>/Remote Scripts/AbletonOSC"
+
+The User Library defaults to ~/Documents/Ableton/User Library but can be
+relocated in Live's preferences; we resolve the real location from Live's
+Library.cfg (see live_paths.py).
 """
 
 from __future__ import annotations
 
 import argparse
 import io
-import os
 import shutil
-import sys
 import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-
-def user_library_remote_scripts() -> Path:
-    """Return the OS-correct Ableton User Library Remote Scripts directory."""
-    if sys.platform == "win32":
-        userprofile = Path(os.environ.get("USERPROFILE", str(Path.home())))
-        return userprofile / "Documents" / "Ableton" / "User Library" / "Remote Scripts"
-    if sys.platform == "darwin":
-        return Path.home() / "Music" / "Ableton" / "User Library" / "Remote Scripts"
-    # Linux is unsupported by Ableton officially; assume the same layout under HOME.
-    return Path.home() / "Ableton" / "User Library" / "Remote Scripts"
+from .live_paths import user_library_remote_scripts
 
 
 def download_zip(ref: str = "master") -> bytes:
