@@ -196,6 +196,22 @@
             <input type="checkbox" x-model="boostOn" class="rounded text-accent-500 bg-ink-700 border-ink-600 focus:ring-accent-500" />
             <span class="text-sm">Boost instrument</span>
           </label>
+          <!-- Click track toggle — disabled + dimmed when the current song
+               has no click.wav. Click volume is separate from primary
+               volume so the metronome can be quieter than the music. -->
+          <label class="flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors"
+                 :class="!currentSong?.has_click ? 'bg-ink-800/50 text-gray-500 cursor-not-allowed' : clickOn ? 'bg-warm-500/20 hover:bg-warm-500/30' : 'bg-ink-800 hover:bg-ink-700'">
+            <input type="checkbox" x-model="clickOn"
+                   :disabled="!currentSong?.has_click"
+                   class="rounded text-warm-500 bg-ink-700 border-ink-600 focus:ring-warm-500 disabled:opacity-40" />
+            <span class="text-sm">Click</span>
+            <span x-show="clickOn && currentSong?.has_click" class="flex items-center gap-1 ml-2">
+              <input type="range" min="0" max="1" step="0.01" x-model.number="clickVolume"
+                     @click.stop @input.stop
+                     class="w-16 h-1 bg-ink-700 rounded-lg appearance-none cursor-pointer accent-warm-500"
+                     title="Click volume" />
+            </span>
+          </label>
           <div class="ml-auto text-xs font-mono text-gray-500 self-center" x-text="currentTrackFilename() || 'no track'"></div>
         </div>
 
@@ -271,6 +287,11 @@
              @loadedmetadata="playerDuration = $event.target.duration"
              @ended="onTrackEnded()"
              @play="isPlaying = true" @pause="isPlaying = false"></audio>
+      <!-- Click track — silent when clickOn=false or currentSong.has_click=false.
+           No event handlers here; the primary $refs.audio is the source of
+           truth for play/pause/seek, and app.js mirrors those actions onto
+           this element. Volume is independent (clickVolume). -->
+      <audio x-ref="click" preload="auto"></audio>
     </div>
   </main>
 

@@ -15,6 +15,11 @@ function practiceApp() {
     selectedInstrument: "drums",
     vocalsOn: false,
     boostOn: false,
+    clickOn: false,
+    // Click volume runs independently from the main volume so a user
+    // can mix the click quieter than the backing track without going
+    // to the OS mixer. Kept in [0, 1] like the primary volume.
+    clickVolume: 0.6,
     playbackRate: 1.0,
     volume: 0.85,
 
@@ -57,6 +62,9 @@ function practiceApp() {
       this.$watch("selectedInstrument", () => this.updateAudio());
       this.$watch("vocalsOn", () => this.updateAudio());
       this.$watch("boostOn", () => this.updateAudio());
+      // Click track: swap-in when toggled; keep in sync with primary.
+      this.$watch("clickOn", () => this.updateClick());
+      this.$watch("clickVolume", () => this.setClickVolume());
     },
 
     _inTextField(t) {
@@ -203,9 +211,13 @@ function practiceApp() {
       if (avail.length > 0 && !avail.includes(this.selectedInstrument)) {
         this.selectedInstrument = avail.includes("drums") ? "drums" : avail[0];
       }
+      // If the incoming song doesn't have a click.wav, force the toggle
+      // off — leaving it "on" but silent would be confusing UI state.
+      if (!song?.has_click && this.clickOn) this.clickOn = false;
       // Load chord sheet
       await this.loadSheet();
       this.updateAudio();
+      this.updateClick();
     },
 
     // --- track resolution ---------------------------------------------
@@ -228,6 +240,65 @@ function practiceApp() {
       const fn = this.currentTrackFilename();
       if (!fn || !this.currentSong || !this.currentSetlist) return null;
       return `/api/audio/${encodeURIComponent(this.currentSetlist.id)}/${encodeURIComponent(this.currentSong.id)}/${encodeURIComponent(fn)}`;
+    },
+
+    // --- click track ---------------------------------------------------
+    // Click plays via a SECOND <audio> element ($refs.click) that mirrors
+    // the primary player's transport (play/pause/seek/rate). Volume runs
+    // independently so the click can be quieter than the backing track.
+    // When the current song has no click.wav (has_click=false), the
+    // toggle is disabled and updateClick() is a no-op.
+
+    clickTrackUrl() {
+      if (!this.currentSong?.has_click) return null;
+      const fn = this.currentSong.tracks?.click;
+      if (!fn || !this.currentSetlist) return null;
+      return `/api/audio/${encodeURIComponent(this.currentSetlist.id)}/${encodeURIComponent(this.currentSong.id)}/${encodeURIComponent(fn)}`;
+    },
+
+    updateClick() {
+      const click = this.$refs.click;
+      if (!click) return;
+      if (!this.clickOn) {
+        // Toggle off — stop the click without unloading. Keeping the
+        // buffer around means re-enabling doesn't re-download.
+        click.pause();
+        return;
+      }
+      const url = this.clickTrackUrl();
+      if (!url) {
+        click.pause();
+        click.removeAttribute("src");
+        click.load();
+        return;
+      }
+      const fullUrl = new URL(url, window.location.origin).href;
+      const primary = this.$refs.audio;
+      if (click.src !== fullUrl) {
+        click.src = url;
+        click.load();
+      }
+      click.playbackRate = this.playbackRate;
+      click.volume = this.clickVolume;
+      // Try to align to the primary's current position + playing state.
+      // Seek + play happen after enough data is buffered.
+      const target = () => {
+        if (primary && !isNaN(primary.currentTime)) {
+          click.currentTime = primary.currentTime;
+        }
+        if (primary && !primary.paused) {
+          click.play().catch(err => console.warn("[click] play failed:", err));
+        }
+      };
+      if (click.readyState >= 2) {
+        target();
+      } else {
+        click.addEventListener("canplay", target, { once: true });
+      }
+    },
+
+    setClickVolume() {
+      if (this.$refs.click) this.$refs.click.volume = this.clickVolume;
     },
 
     updateAudio() {
@@ -279,14 +350,32 @@ function practiceApp() {
       }
       if (audio.paused) {
         audio.play()
-          .then(() => console.log("[player] playing:", audio.src))
+          .then(() => {
+            console.log("[player] playing:", audio.src);
+            // Mirror to click when enabled.
+            this._playClickInSync();
+          })
           .catch(err => {
             console.error("[player] play() rejected:", err);
             this.flashError(`Playback failed: ${err.name} — ${err.message}`);
           });
       } else {
         audio.pause();
+        if (this.$refs.click) this.$refs.click.pause();
       }
+    },
+
+    // Sync helper — used when starting playback from any entry point.
+    _playClickInSync() {
+      const click = this.$refs.click;
+      const audio = this.$refs.audio;
+      if (!click || !audio || !this.clickOn) return;
+      // Match position + rate + volume before firing play so the two
+      // don't drift out of sync in the first few frames.
+      click.playbackRate = this.playbackRate;
+      click.volume = this.clickVolume;
+      if (!isNaN(audio.currentTime)) click.currentTime = audio.currentTime;
+      click.play().catch(err => console.warn("[click] play failed:", err));
     },
 
     flashError(msg) {
@@ -299,10 +388,16 @@ function practiceApp() {
       const audio = this.$refs.audio;
       if (!audio) return;
       audio.currentTime = Number(t);
+      // Keep the click in lockstep with the primary track.
+      if (this.$refs.click && this.clickOn) {
+        this.$refs.click.currentTime = Number(t);
+      }
     },
 
     setRate() {
       if (this.$refs.audio) this.$refs.audio.playbackRate = this.playbackRate;
+      // Rate affects the click too so beats stay aligned with the music.
+      if (this.$refs.click) this.$refs.click.playbackRate = this.playbackRate;
     },
 
     setVolume() {
