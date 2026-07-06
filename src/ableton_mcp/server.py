@@ -14,6 +14,7 @@ from .tools import (
     bench,
     bounce,
     browser,
+    click_track,
     clip_slots,
     clips,
     cue_points,
@@ -111,6 +112,10 @@ def build_server() -> FastMCP:
     # Mix-aware shaping — multi-track masking analysis, propose/apply/verify
     # loop driven by intent words ("cuts_through", "muddy", "harsh", ...).
     mix.register(mcp)
+    # Click track generation — beat_this beat/downbeat detection + sine-burst
+    # click synthesis. Two tools: song_click_track (WAV out) + song_detect_beats
+    # (timestamps only).
+    click_track.register(mcp)
 
     return mcp
 

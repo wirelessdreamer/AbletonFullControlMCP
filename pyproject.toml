@@ -59,6 +59,14 @@ practice_app = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+# Click track generation via CPJKU/beat_this. Pulls a small neural net
+# (77 MB checkpoint downloaded on first run) that detects beats +
+# downbeats, then synthesizes sine-burst clicks. Most of the deep-
+# learning stack is already installed via demucs; beat_this itself
+# adds rotary-embedding-torch.
+click_track = [
+    "beat_this>=1.1.0",
+]
 # Convenience: everything heavy at once.
 all-heavy = [
     "ableton-mcp[knowledge,musicgen]",
