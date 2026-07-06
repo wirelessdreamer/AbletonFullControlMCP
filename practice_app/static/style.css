@@ -1,0 +1,36 @@
+[x-cloak] { display: none !important; }
+
+html, body { height: 100%; }
+
+/* Custom scrollbar for the dark UI */
+.custom-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.custom-scroll::-webkit-scrollbar-track { background: transparent; }
+.custom-scroll::-webkit-scrollbar-thumb { background: #33334a; border-radius: 4px; }
+.custom-scroll::-webkit-scrollbar-thumb:hover { background: #4a4a66; }
+
+/* Range slider thumb tweaks */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #5a96ff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover { background: #7fb3ff; }
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #5a96ff;
+  cursor: pointer;
+  border: none;
+}
+
+/* Smooth fade-ins */
+[x-show] { transition: opacity 0.15s ease-in-out; }
+
+/* Chord-row line height tweak — chord and lyric rows hug together */
+.chord-line { line-height: 1.1; }

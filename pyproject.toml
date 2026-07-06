@@ -51,6 +51,14 @@ knowledge = [
 musicgen = [
     "audiocraft>=1.3.0",
 ]
+# practice_app/ — FastAPI web UI for browsing the practice-pack output
+# (setlists, per-song boost tracks, chord sheets, playlists). Separate
+# from the MCP server itself; the practice_app package doesn't depend
+# on ableton_mcp so this extra just pulls the web deps.
+practice_app = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 # Convenience: everything heavy at once.
 all-heavy = [
     "ableton-mcp[knowledge,musicgen]",

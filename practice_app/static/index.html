@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Practice Pack</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%235a96ff'/%3E%3Ctext x='50' y='68' font-size='60' font-family='sans-serif' font-weight='bold' text-anchor='middle' fill='%230a0a0f'%3EP%3C/text%3E%3C/svg%3E" />
+  <!-- Vendored locally so the app works fully offline + isn't blocked by adblockers -->
+  <script src="/vendor/tailwind.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: { 950: "#0a0a0f", 900: "#11111a", 850: "#16161f", 800: "#1c1c28", 700: "#252533", 600: "#33334a", 500: "#4a4a66" },
+            accent: { 400: "#7fb3ff", 500: "#5a96ff", 600: "#3d7fff" },
+            warm: { 400: "#ffb56b", 500: "#ff9c3e" },
+          },
+          fontFamily: {
+            display: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+            mono: ['ui-monospace', 'Consolas', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/style.css" />
+  <!-- app.js MUST load before alpine, so Alpine's auto-init finds practiceApp() -->
+  <script src="/app.js"></script>
+  <script defer src="/vendor/alpine-collapse.min.js"></script>
+  <script defer src="/vendor/alpine.min.js"></script>
+</head>
+<body class="bg-ink-950 text-gray-200 font-display antialiased" x-data="practiceApp()" x-init="init()" x-cloak>
+
+<!-- ERROR TOAST -->
+<div x-show="lastError" x-transition x-cloak
+     class="fixed top-16 right-4 z-50 max-w-md bg-warm-500 text-ink-950 px-4 py-3 rounded-lg shadow-lg font-medium text-sm">
+  <span x-text="lastError"></span>
+  <button @click="lastError = ''" class="ml-3 text-ink-950 hover:text-ink-900">×</button>
+</div>
+
+<!-- TOP BAR ------------------------------------------------------------- -->
+<header class="h-14 border-b border-ink-700 px-5 flex items-center justify-between sticky top-0 bg-ink-950/95 backdrop-blur z-30">
+  <div class="flex items-center gap-3">
+    <div class="h-7 w-7 rounded bg-gradient-to-br from-accent-500 to-warm-500 flex items-center justify-center text-ink-950 font-bold text-sm">P</div>
+    <h1 class="font-semibold tracking-tight">Practice Pack</h1>
+    <span class="text-xs text-gray-500" x-text="`${setlists.length} setlist${setlists.length===1?'':'s'}`"></span>
+  </div>
+  <div class="flex items-center gap-2">
+    <button @click="reloadSetlists()" class="px-2 py-1 text-xs text-gray-400 hover:text-white rounded hover:bg-ink-800" title="Rescan practice pack directory">
+      ↻ rescan
+    </button>
+    <button @click="playlistMode = !playlistMode"
+            :class="playlistMode ? 'bg-accent-600 text-white' : 'bg-ink-800 text-gray-300 hover:bg-ink-700'"
+            class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors">
+      Playlist mode
+    </button>
+  </div>
+</header>
+
+<!-- MAIN LAYOUT --------------------------------------------------------- -->
+<div class="flex h-[calc(100vh-3.5rem)]">
+
+  <!-- LEFT: setlist library + current setlist songs ------------------- -->
+  <aside class="w-72 border-r border-ink-700 overflow-y-auto custom-scroll bg-ink-900">
+    <div class="p-3">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Setlists</h2>
+      <template x-for="sl in setlists" :key="sl.id">
+        <div class="mb-1">
+          <button @click="selectSetlist(sl)"
+                  :class="currentSetlist?.id === sl.id ? 'bg-accent-600/20 text-accent-400' : 'hover:bg-ink-800 text-gray-300'"
+                  class="w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between group">
+            <span class="truncate" x-text="sl.name"></span>
+            <span class="text-xs text-gray-500 ml-2" x-text="sl.songs.length"></span>
+          </button>
+          <div x-show="currentSetlist?.id === sl.id" x-collapse class="ml-2 mt-1 border-l border-ink-700 pl-2">
+            <template x-for="song in sl.songs" :key="song.id">
+              <button @click="selectSong(song)"
+                      :class="currentSong?.id === song.id ? 'bg-ink-700 text-white' : 'hover:bg-ink-800 text-gray-400'"
+                      class="w-full text-left px-2 py-1 rounded text-sm flex items-center justify-between gap-2">
+                <span class="flex items-center gap-1.5 truncate flex-1">
+                  <!-- Status dot before the title -->
+                  <span :class="statusDotClass(song.status)" :title="statusLabel(song.status)" class="w-2 h-2 rounded-full flex-shrink-0"></span>
+                  <span class="truncate" x-text="song.title"></span>
+                </span>
+                <span class="text-xs font-mono px-1.5 py-0.5 rounded bg-ink-700 text-warm-400" x-text="song.target_key || '?'"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="setlists.length === 0" class="text-sm text-gray-500 italic p-3">
+        No setlists yet. Run a practice pack first.
+      </div>
+    </div>
+
+    <!-- Status legend -->
+    <div class="px-3 pb-3 mt-2 text-[10px] text-gray-500 space-y-1 border-t border-ink-700 pt-3" x-show="setlists.length > 0">
+      <div class="font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Status</div>
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Ready</div>
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-warm-500"></span> Needs review (key uncertain)</div>
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-accent-500"></span> Needs transpose</div>
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-gray-600"></span> Needs audio</div>
+    </div>
+
+    <!-- Playlists section -->
+    <div class="p-3 border-t border-ink-700" x-show="playlists.length > 0">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Playlists</h2>
+      <template x-for="pl in playlists" :key="pl.id">
+        <button @click="loadPlaylist(pl)"
+                class="w-full text-left px-2 py-1.5 rounded text-sm hover:bg-ink-800 text-gray-300 flex items-center justify-between">
+          <span class="truncate" x-text="pl.name"></span>
+          <span class="text-xs text-gray-500" x-text="(pl.items?.length || 0) + ' songs'"></span>
+        </button>
+      </template>
+    </div>
+  </aside>
+
+  <!-- MAIN: song view ------------------------------------------------- -->
+  <main class="flex-1 overflow-y-auto custom-scroll relative">
+    <div x-show="!currentSong" class="h-full flex items-center justify-center text-gray-500">
+      <div class="text-center">
+        <div class="text-5xl mb-3">🎵</div>
+        <p class="text-sm">Select a setlist from the left, then pick a song.</p>
+      </div>
+    </div>
+
+    <div x-show="currentSong" class="p-6 pb-32">
+      <!-- NEEDS-REVIEW BANNER -->
+      <div x-show="currentSong?.status === 'needs_review'" x-transition class="mb-6 bg-warm-500/10 border border-warm-500/40 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <div class="text-warm-400 text-xl leading-none mt-0.5">⚠</div>
+          <div class="flex-1">
+            <h4 class="text-warm-400 font-semibold text-sm mb-1">Needs review — source key uncertain</h4>
+            <p class="text-sm text-gray-300 mb-3" x-text="currentSong?.review_question"></p>
+            <div class="flex flex-wrap gap-2 items-center">
+              <span class="text-xs text-gray-400 mr-1">Choose source key:</span>
+              <template x-for="k in (currentSong?.candidate_source_keys || [])" :key="k">
+                <button @click="resolveReview(k)"
+                        class="px-3 py-1 text-sm bg-warm-500 hover:bg-warm-400 text-ink-950 rounded font-medium">
+                  <span x-text="k"></span>
+                </button>
+              </template>
+              <button @click="resolveReviewCustom()" class="px-3 py-1 text-sm bg-ink-800 hover:bg-ink-700 text-gray-300 rounded">
+                Other…
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- NEEDS-TRANSPOSE / NEEDS-AUDIO BANNER -->
+      <div x-show="['needs_transpose', 'needs_audio'].includes(currentSong?.status)" x-transition class="mb-6 bg-accent-600/10 border border-accent-600/40 rounded-lg p-3">
+        <div class="flex items-center gap-2 text-sm">
+          <span class="w-2 h-2 rounded-full" :class="currentSong?.status === 'needs_transpose' ? 'bg-accent-500' : 'bg-gray-600'"></span>
+          <span class="text-gray-300" x-text="currentSong?.status === 'needs_transpose' ? `Source key confirmed (${currentSong?.source_key} → ${currentSong?.target_key}, ${currentSong?.shift_semitones >= 0 ? '+' : ''}${currentSong?.shift_semitones} semitones). Transpose + practice pack not yet built.` : 'Audio not yet processed into a practice pack.'"></span>
+        </div>
+      </div>
+
+      <!-- Song header -->
+      <div class="mb-6">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-3xl font-bold tracking-tight" x-text="currentSong?.title"></h1>
+            <div class="flex items-center gap-3 mt-2 text-sm text-gray-400">
+              <span class="px-2 py-0.5 rounded bg-ink-800 font-mono text-warm-400">
+                target <span x-text="currentSong?.target_key || '?'"></span>
+              </span>
+              <span x-show="currentSong?.source_key && currentSong?.source_key !== currentSong?.target_key" class="px-2 py-0.5 rounded bg-ink-800 font-mono text-gray-400">
+                from <span x-text="currentSong?.source_key"></span>
+                <span x-show="currentSong?.shift_semitones" x-text="`(${currentSong?.shift_semitones >= 0 ? '+' : ''}${currentSong?.shift_semitones})`"></span>
+              </span>
+              <span x-show="currentSong?.tempo_bpm" class="px-2 py-0.5 rounded bg-ink-800 font-mono text-gray-400">
+                <span x-text="currentSong?.tempo_bpm"></span> BPM
+              </span>
+              <a x-show="currentSong?.youtube_url" :href="currentSong?.youtube_url" target="_blank"
+                 class="text-accent-400 hover:text-accent-300 text-xs underline decoration-dotted">YouTube</a>
+            </div>
+            <p x-show="currentSong?.notes" class="text-xs text-gray-500 mt-2 italic" x-text="currentSong?.notes"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONTROLS ------------------------------------------------ -->
+      <div class="bg-ink-900 rounded-lg p-5 mb-6 border border-ink-700">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Playback configuration</h3>
+
+        <!-- Primary toggles: vocals + boost -->
+        <div class="flex flex-wrap gap-3 mb-4">
+          <label class="flex items-center gap-2 px-3 py-2 rounded bg-ink-800 cursor-pointer hover:bg-ink-700">
+            <input type="checkbox" x-model="vocalsOn" class="rounded text-accent-500 bg-ink-700 border-ink-600 focus:ring-accent-500" />
+            <span class="text-sm">Vocals on</span>
+          </label>
+          <label class="flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors"
+                 :class="boostOn ? 'bg-accent-600/20 hover:bg-accent-600/30' : 'bg-ink-800 hover:bg-ink-700'">
+            <input type="checkbox" x-model="boostOn" class="rounded text-accent-500 bg-ink-700 border-ink-600 focus:ring-accent-500" />
+            <span class="text-sm">Boost instrument</span>
+          </label>
+          <div class="ml-auto text-xs font-mono text-gray-500 self-center" x-text="currentTrackFilename() || 'no track'"></div>
+        </div>
+
+        <!-- Instrument selector — only relevant when boost is on -->
+        <div x-show="boostOn" x-transition class="pt-3 border-t border-ink-700">
+          <label class="text-xs text-gray-400 mb-2 block">Featured instrument</label>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="inst in availableInstruments()" :key="inst">
+              <button @click="selectedInstrument = inst"
+                      :class="selectedInstrument === inst ? 'bg-accent-500 text-ink-950 font-medium' : 'bg-ink-800 hover:bg-ink-700 text-gray-300'"
+                      class="px-3 py-1.5 text-sm rounded capitalize transition-colors">
+                <span x-text="inst"></span>
+              </button>
+            </template>
+            <span x-show="availableInstruments().length === 0" class="text-xs text-gray-500 italic">No boost variants available for this song</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHORD/LYRIC SHEET ------------------------------------ -->
+      <div class="bg-ink-900 rounded-lg p-5 border border-ink-700">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500">Chord sheet</h3>
+          <div class="flex gap-2">
+            <button x-show="!sheetEditing && sheetContent" @click="sheetEditing = true; sheetDraft = sheetContent" class="text-xs text-gray-400 hover:text-white">edit</button>
+            <button x-show="!sheetEditing && !sheetContent" @click="sheetEditing = true; sheetDraft = ''" class="text-xs text-accent-400 hover:text-accent-300">+ add chord sheet</button>
+            <button x-show="sheetEditing" @click="saveSheet()" class="text-xs text-accent-400 hover:text-accent-300">save</button>
+            <button x-show="sheetEditing" @click="sheetEditing = false" class="text-xs text-gray-500 hover:text-white">cancel</button>
+          </div>
+        </div>
+        <div x-show="!sheetEditing && sheetContent" class="font-mono text-sm leading-relaxed" x-html="renderSheet(sheetContent)"></div>
+        <div x-show="!sheetEditing && !sheetContent" class="text-sm text-gray-500 italic">
+          No chord sheet yet. Click "+ add chord sheet" — supports ChordPro syntax like <code class="text-accent-400">[Am]Amazing [C]grace</code>.
+        </div>
+        <textarea x-show="sheetEditing" x-model="sheetDraft" rows="20"
+                  class="w-full bg-ink-950 border border-ink-700 rounded p-3 font-mono text-sm text-gray-200 focus:border-accent-500 focus:outline-none"
+                  placeholder="Paste ChordPro lyrics here, e.g.&#10;&#10;{title: Amazing Grace}&#10;{key: G}&#10;&#10;[G]Amazing [G/B]grace, how [C]sweet the [G]sound..."></textarea>
+      </div>
+    </div>
+
+    <!-- PLAYER (sticky bottom) -------------------------------- -->
+    <div x-show="currentSong" class="fixed bottom-0 left-72 right-0 bg-ink-900 border-t border-ink-700 backdrop-blur px-6 py-3 z-20">
+      <div class="flex items-center gap-4">
+        <button @click="togglePlay(); $event.currentTarget.blur()" class="w-10 h-10 rounded-full bg-accent-500 hover:bg-accent-400 text-ink-950 flex items-center justify-center transition-colors">
+          <svg x-show="!isPlaying" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg x-show="isPlaying" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+        <div class="flex-1">
+          <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+            <span x-text="formatTime(playerTime)"></span>
+            <span x-text="formatTime(playerDuration)"></span>
+          </div>
+          <input type="range" min="0" :max="playerDuration || 0" step="0.1" :value="playerTime"
+                 @input="seek($event.target.value)"
+                 class="w-full h-1 bg-ink-700 rounded-lg appearance-none cursor-pointer accent-accent-500" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-gray-500">Speed</label>
+          <select x-model.number="playbackRate" @change="setRate()" class="bg-ink-800 border border-ink-700 rounded text-sm px-2 py-1">
+            <option value="0.5">0.5×</option>
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+          </select>
+          <label class="text-xs text-gray-500 ml-2">Vol</label>
+          <input type="range" min="0" max="1" step="0.01" x-model.number="volume" @input="setVolume()"
+                 class="w-20 h-1 bg-ink-700 rounded-lg appearance-none cursor-pointer accent-accent-500" />
+        </div>
+        <button x-show="playlistMode" @click="next()" class="px-2 py-1 text-xs text-gray-400 hover:text-white rounded hover:bg-ink-800" title="Next in playlist">⏭</button>
+      </div>
+      <audio x-ref="audio" @timeupdate="playerTime = $event.target.currentTime"
+             @loadedmetadata="playerDuration = $event.target.duration"
+             @ended="onTrackEnded()"
+             @play="isPlaying = true" @pause="isPlaying = false"></audio>
+    </div>
+  </main>
+
+  <!-- RIGHT: playlist queue (visible in playlist mode) ----------- -->
+  <aside x-show="playlistMode" x-cloak class="w-72 border-l border-ink-700 overflow-y-auto custom-scroll bg-ink-900">
+    <div class="p-3">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2 flex items-center justify-between">
+        <span>Queue</span>
+        <button @click="clearQueue()" x-show="queue.length > 0" class="text-gray-500 hover:text-white normal-case text-xs font-normal">clear</button>
+      </h2>
+      <template x-for="(item, idx) in queue" :key="idx">
+        <div :class="idx === queueIndex ? 'bg-accent-600/20 text-accent-400' : 'hover:bg-ink-800 text-gray-300'"
+             class="px-2 py-1.5 rounded text-sm flex items-center justify-between group cursor-pointer"
+             @click="playFromQueue(idx)">
+          <div class="truncate">
+            <div x-text="item.title" class="truncate"></div>
+            <div class="text-xs text-gray-500 truncate" x-text="item.setlistName + ' • ' + (item.instrument || 'no boost')"></div>
+          </div>
+          <button @click.stop="removeFromQueue(idx)" class="text-gray-600 hover:text-warm-400 opacity-0 group-hover:opacity-100 ml-2">×</button>
+        </div>
+      </template>
+      <div x-show="queue.length === 0" class="text-sm text-gray-500 italic p-3">
+        Empty queue. Click "+ queue" next to any song to add.
+      </div>
+      <button x-show="currentSong && playlistMode" @click="addCurrentToQueue()" class="w-full mt-3 px-3 py-2 text-sm bg-ink-800 hover:bg-ink-700 text-accent-400 rounded">
+        + queue current song
+      </button>
+      <button x-show="queue.length > 1" @click="savePlaylistPrompt()" class="w-full mt-2 px-3 py-2 text-xs bg-ink-800 hover:bg-ink-700 text-gray-400 rounded">
+        save as playlist…
+      </button>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

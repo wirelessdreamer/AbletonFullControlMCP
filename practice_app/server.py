@@ -1,0 +1,461 @@
+"""Practice Pack web app — FastAPI backend.
+
+Scans D:/Music/YouTube/practice_pack/ for setlists, exposes them via JSON
+APIs, and serves audio with HTTP range support (needed for the HTMLAudio
+seek bar to work properly on large WAVs).
+
+Run:
+  # localhost only (default — safest, only reachable from this machine)
+  "D:/Code/AbletonFullControlMCP/.venv/Scripts/python.exe" \
+      D:/Code/AbletonFullControlMCP/practice_app/server.py
+
+  # LAN mode — reachable from any device on your local network
+  # (phones, laptops, etc). Useful for opening on your music-room
+  # laptop while the server runs on your main box.
+  python server.py --lan
+
+  # Custom port
+  python server.py --lan --port 9000
+"""
+import argparse
+import json
+import re
+import socket
+import sys
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+import uvicorn
+
+
+HERE = Path(__file__).resolve().parent
+STATIC_DIR = HERE / "static"
+PLAYLISTS_DIR = HERE / "data" / "playlists"
+PRACTICE_PACK_ROOT = Path("D:/Music/YouTube/practice_pack")
+
+PLAYLISTS_DIR.mkdir(parents=True, exist_ok=True)
+PRACTICE_PACK_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+app = FastAPI(title="Practice Pack")
+
+
+# ---------------------------------------------------------------------------
+# Setlist + song scanning
+# ---------------------------------------------------------------------------
+INSTRUMENT_NAMES = ["drums", "bass", "other", "guitar", "piano"]
+
+
+def _parse_boost_filename(stem: str) -> dict | None:
+    """Recognize make_practice_pack.py's filename schema:
+        '<base> - <Inst> Boost (no vocals)'   -> instrument, no vocals
+        '<Inst> Boost (with vocals)'          -> instrument, with vocals
+        '<base> - <Inst>_boost_no_vocals'     -> snake-case variant (future)
+    Also recognises bare 'No Vocals' / 'no_vocals' suffixes (handled separately).
+    """
+    s = stem.lower()
+    # Pattern A: " - <inst> boost (no/with vocals)" at end (current pipeline output)
+    m = re.search(r"\s*-?\s*(?P<inst>[a-z]+)\s+boost\s*\((?P<vox>no|with)\s*vocals\)\s*$", s)
+    if m:
+        inst = m.group("inst")
+        if inst in INSTRUMENT_NAMES:
+            return {"instrument": inst, "with_vocals": m.group("vox") == "with"}
+    # Pattern B: " - <inst>_boost_(no_vocals|with_vocals)" — snake-case variant
+    m = re.search(r"(?P<inst>[a-z]+)_boost_(?P<vox>no_vocals|with_vocals)\s*$", s)
+    if m:
+        inst = m.group("inst")
+        if inst in INSTRUMENT_NAMES:
+            return {"instrument": inst, "with_vocals": m.group("vox") == "with_vocals"}
+    return None
+
+
+def _is_no_vocals_filename(stem: str) -> bool:
+    """Match '<base> - No Vocals' or bare 'no_vocals'."""
+    s = stem.lower()
+    return s.endswith(" - no vocals") or s == "no_vocals" or s.endswith("- no vocals")
+
+
+def _is_full_mix_filename(stem: str) -> bool:
+    s = stem.lower()
+    return s.endswith(" - full mix") or s == "full_mix" or s.endswith("- full mix")
+
+
+def _scan_song(song_dir: Path) -> dict[str, Any]:
+    """Inspect a song directory, derive metadata + available tracks."""
+    # Parse name + key from "Song Title - Key" directory convention
+    name = song_dir.name
+    key = None
+    if " - " in name:
+        title, key = name.rsplit(" - ", 1)
+    else:
+        title = name
+
+    meta_file = song_dir / "meta.json"
+    meta = {}
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Track index: map (no-vox/full/instrument+vox/boost) -> filename
+    tracks: dict[str, str] = {}
+    instruments_available: set[str] = set()
+    for wav in song_dir.glob("*.wav"):
+        if _is_no_vocals_filename(wav.stem):
+            tracks["no_vocals"] = wav.name
+            continue
+        if _is_full_mix_filename(wav.stem):
+            tracks["full_mix"] = wav.name
+            continue
+        parsed = _parse_boost_filename(wav.stem)
+        if parsed:
+            key_str = f"{parsed['instrument']}_{'with_vocals' if parsed['with_vocals'] else 'no_vocals'}"
+            tracks[key_str] = wav.name
+            instruments_available.add(parsed["instrument"])
+
+    # Look for chord/lyric sheets
+    sheet_path = None
+    for candidate in ("chords.pro", "chords.md", "lyrics.md", "chord_sheet.txt"):
+        if (song_dir / candidate).exists():
+            sheet_path = candidate
+            break
+
+    # Derive status: explicit `status` in meta wins; otherwise infer from
+    # what's on disk. A song with at least no_vocals.wav is treated as ready.
+    status = meta.get("status")
+    if not status:
+        if "no_vocals" in tracks:
+            status = "ready"
+        elif not tracks:
+            status = "needs_audio"
+        else:
+            status = "partial"
+    return {
+        "id": song_dir.name,
+        "title": meta.get("title") or title,
+        "target_key": meta.get("target_key") or key,
+        "source_key": meta.get("source_key"),
+        "shift_semitones": meta.get("shift_semitones"),
+        "youtube_url": meta.get("youtube_url"),
+        "tempo_bpm": meta.get("tempo_bpm"),
+        "notes": meta.get("notes"),
+        "status": status,
+        "review_question": meta.get("review_question"),
+        "candidate_source_keys": meta.get("candidate_source_keys"),
+        "tracks": tracks,
+        "instruments_available": sorted(instruments_available),
+        "chord_sheet": sheet_path,
+    }
+
+
+def _scan_setlist(setlist_dir: Path) -> dict[str, Any]:
+    meta_file = setlist_dir / "setlist.json"
+    meta = {}
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Pre-defined song order, otherwise alphabetical
+    ordered_ids = meta.get("song_order") or []
+    # Exclude working directories (prefixed with _) — used by the pipeline for
+    # intermediate bounces, not song output
+    song_dirs = [d for d in setlist_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
+    by_id = {d.name: d for d in song_dirs}
+    if ordered_ids:
+        ordered = [by_id[sid] for sid in ordered_ids if sid in by_id]
+        # Append any extras at the end
+        ordered += [d for d in song_dirs if d.name not in ordered_ids]
+    else:
+        ordered = sorted(song_dirs, key=lambda d: d.name)
+
+    return {
+        "id": setlist_dir.name,
+        "name": meta.get("name") or setlist_dir.name.replace("setlist_", "").replace("_", " "),
+        "date": meta.get("date"),
+        "notes": meta.get("notes"),
+        "songs": [_scan_song(d) for d in ordered],
+    }
+
+
+# ---------------------------------------------------------------------------
+# API endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/setlists")
+def list_setlists():
+    """List all setlists (with full song details — single-call hydration)."""
+    if not PRACTICE_PACK_ROOT.exists():
+        return []
+    setlist_dirs = [d for d in PRACTICE_PACK_ROOT.iterdir() if d.is_dir()]
+    return [_scan_setlist(d) for d in sorted(setlist_dirs, key=lambda d: d.name)]
+
+
+@app.get("/api/setlists/{setlist_id}")
+def get_setlist(setlist_id: str):
+    setlist_dir = PRACTICE_PACK_ROOT / setlist_id
+    if not setlist_dir.is_dir():
+        raise HTTPException(404, "setlist not found")
+    return _scan_setlist(setlist_dir)
+
+
+@app.head("/api/audio/{setlist_id}/{song_id}/{filename}")
+def head_audio(setlist_id: str, song_id: str, filename: str):
+    """Some browsers HEAD-probe before issuing the range GET — answer it."""
+    audio_path = PRACTICE_PACK_ROOT / setlist_id / song_id / filename
+    if not audio_path.is_file():
+        raise HTTPException(404, "audio not found")
+    return Response(
+        status_code=200,
+        headers={
+            "Content-Type": "audio/wav",
+            "Content-Length": str(audio_path.stat().st_size),
+            "Accept-Ranges": "bytes",
+        },
+    )
+
+
+@app.get("/api/audio/{setlist_id}/{song_id}/{filename}")
+def serve_audio(setlist_id: str, song_id: str, filename: str, request: Request):
+    """Serve audio with HTTP range request support (for HTMLAudio seek)."""
+    audio_path = PRACTICE_PACK_ROOT / setlist_id / song_id / filename
+    if not audio_path.is_file():
+        raise HTTPException(404, "audio not found")
+    # Resolve the canonical path and refuse anything outside PRACTICE_PACK_ROOT
+    if not str(audio_path.resolve()).startswith(str(PRACTICE_PACK_ROOT.resolve())):
+        raise HTTPException(403, "forbidden")
+
+    file_size = audio_path.stat().st_size
+    range_header = request.headers.get("range")
+    if range_header is None:
+        return FileResponse(str(audio_path), media_type="audio/wav")
+
+    # Parse "bytes=START-END" (END optional)
+    m = re.fullmatch(r"bytes=(\d+)-(\d*)", range_header.strip())
+    if not m:
+        raise HTTPException(400, "bad range header")
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else file_size - 1
+    end = min(end, file_size - 1)
+    if start > end:
+        raise HTTPException(416, "range not satisfiable")
+
+    length = end - start + 1
+    with open(audio_path, "rb") as f:
+        f.seek(start)
+        data = f.read(length)
+    headers = {
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(length),
+    }
+    return Response(content=data, status_code=206, media_type="audio/wav", headers=headers)
+
+
+@app.get("/api/sheet/{setlist_id}/{song_id}")
+def get_sheet(setlist_id: str, song_id: str):
+    """Return chord/lyric sheet content as plain text."""
+    song_dir = PRACTICE_PACK_ROOT / setlist_id / song_id
+    if not song_dir.is_dir():
+        raise HTTPException(404, "song not found")
+    for candidate in ("chords.pro", "chords.md", "lyrics.md", "chord_sheet.txt"):
+        p = song_dir / candidate
+        if p.exists():
+            return {"filename": candidate, "content": p.read_text(encoding="utf-8")}
+    return {"filename": None, "content": None}
+
+
+@app.put("/api/resolve/{setlist_id}/{song_id}")
+async def resolve_review(setlist_id: str, song_id: str, request: Request):
+    """Resolve a needs_review song. Body: {chosen_key: 'G'} sets that as the
+    confirmed source_key, recomputes shift to target_key, and flips status."""
+    body = await request.json()
+    chosen = body.get("chosen_key")
+    if not chosen:
+        raise HTTPException(400, "missing chosen_key")
+    song_dir = PRACTICE_PACK_ROOT / setlist_id / song_id
+    meta_path = song_dir / "meta.json"
+    if not meta_path.exists():
+        raise HTTPException(404, "meta.json not found")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    # Compute shift from chosen key to target_key
+    notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    flat_to_sharp = {"Db": "C#", "Eb": "D#", "Gb": "F#", "Ab": "G#", "Bb": "A#"}
+    norm = lambda k: flat_to_sharp.get(k, k.upper())
+    src, tgt = norm(chosen), norm(meta.get("target_key", ""))
+    if src in notes and tgt in notes:
+        diff = (notes.index(tgt) - notes.index(src)) % 12
+        if diff > 6: diff -= 12
+        meta["shift_semitones"] = diff
+    meta["source_key"] = chosen
+    # If shift is 0, it's ready as-is. Otherwise it's pending transpose.
+    if meta.get("shift_semitones") == 0:
+        meta["status"] = "ready"
+    else:
+        meta["status"] = "needs_transpose"
+    # Remember the choice for the audit trail
+    meta["review_resolved"] = {"chosen_key": chosen, "previous_status": "needs_review"}
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return {"ok": True, "new_status": meta["status"], "shift_semitones": meta["shift_semitones"]}
+
+
+@app.put("/api/sheet/{setlist_id}/{song_id}")
+async def put_sheet(setlist_id: str, song_id: str, request: Request):
+    """Save chord/lyric sheet for a song. Body: {filename, content}."""
+    body = await request.json()
+    filename = body.get("filename") or "chords.pro"
+    content = body.get("content", "")
+    if "/" in filename or "\\" in filename or filename.startswith("."):
+        raise HTTPException(400, "invalid filename")
+    song_dir = PRACTICE_PACK_ROOT / setlist_id / song_id
+    if not song_dir.is_dir():
+        raise HTTPException(404, "song not found")
+    (song_dir / filename).write_text(content, encoding="utf-8")
+    return {"ok": True, "saved": filename}
+
+
+# ---------------------------------------------------------------------------
+# Playlists (cross-setlist song sequences)
+# ---------------------------------------------------------------------------
+@app.get("/api/playlists")
+def list_playlists():
+    out = []
+    for f in sorted(PLAYLISTS_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            data["id"] = f.stem
+            out.append(data)
+        except Exception:
+            pass
+    return out
+
+
+@app.get("/api/playlists/{playlist_id}")
+def get_playlist(playlist_id: str):
+    p = PLAYLISTS_DIR / f"{playlist_id}.json"
+    if not p.exists():
+        raise HTTPException(404, "playlist not found")
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data["id"] = playlist_id
+    return data
+
+
+@app.put("/api/playlists/{playlist_id}")
+async def put_playlist(playlist_id: str, request: Request):
+    """Body: {name, items:[{setlist_id, song_id, ...settings}]}."""
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", playlist_id):
+        raise HTTPException(400, "invalid playlist id")
+    body = await request.json()
+    if "name" not in body or "items" not in body:
+        raise HTTPException(400, "missing name or items")
+    (PLAYLISTS_DIR / f"{playlist_id}.json").write_text(
+        json.dumps(body, indent=2), encoding="utf-8"
+    )
+    return {"ok": True, "id": playlist_id}
+
+
+@app.delete("/api/playlists/{playlist_id}")
+def delete_playlist(playlist_id: str):
+    p = PLAYLISTS_DIR / f"{playlist_id}.json"
+    if not p.exists():
+        raise HTTPException(404, "playlist not found")
+    p.unlink()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Static (frontend) — mounted LAST so /api routes resolve first
+# ---------------------------------------------------------------------------
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
+
+# ---------------------------------------------------------------------------
+# Startup + LAN discovery
+# ---------------------------------------------------------------------------
+
+
+def _get_lan_ips() -> list[str]:
+    """Enumerate this machine's non-loopback IPv4 addresses.
+
+    Used to print copy-paste-able URLs on server start when ``--lan``
+    is enabled, so the user knows exactly which URL to type into their
+    music-room laptop.
+    """
+    ips: list[str] = []
+    seen: set[str] = set()
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, family=socket.AF_INET):
+            ip = info[4][0]
+            if ip in seen or ip.startswith("127."):
+                continue
+            seen.add(ip)
+            ips.append(ip)
+    except Exception:
+        # DNS resolution can fail on machines with weird networking.
+        # Fall back to the "open a UDP socket to 8.8.8.8 and read our
+        # own end" trick — no packet is actually sent.
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and not ip.startswith("127."):
+                ips.append(ip)
+        except Exception:
+            pass
+    return ips
+
+
+def _print_startup_banner(host: str, port: int, lan: bool) -> None:
+    """Print a friendly banner with the actual URLs the user can hit."""
+    bar = "=" * 62
+    print()
+    print(bar)
+    print(f"  Practice Pack -- listening on {host}:{port}")
+    print(bar)
+    if lan:
+        print(f"    Local:    http://127.0.0.1:{port}")
+        for ip in _get_lan_ips():
+            print(f"    Network:  http://{ip}:{port}")
+        print()
+        print("    LAN MODE: reachable by any device on your local")
+        print("    network. If a device can't connect, Windows Firewall")
+        print("    may be blocking inbound TCP on this port -- accept the")
+        print("    prompt when it appears, or add an inbound rule manually.")
+    else:
+        print(f"    URL:      http://127.0.0.1:{port}")
+        print("    (localhost only -- pass --lan to reach it from other devices)")
+    print(bar)
+    print()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Practice Pack web app.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--lan",
+        action="store_true",
+        help=(
+            "Bind to 0.0.0.0 so the server is reachable from other "
+            "devices on your local network. Default is 127.0.0.1 "
+            "(localhost only)."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port to listen on (default: 8765).",
+    )
+    args = parser.parse_args()
+
+    host = "0.0.0.0" if args.lan else "127.0.0.1"
+    _print_startup_banner(host, args.port, args.lan)
+    uvicorn.run("server:app", host=host, port=args.port, reload=False)
