@@ -295,6 +295,7 @@ async def transpose_song(
     output_path: str | Path | None = None,
     bounce_tail_sec: float = 1.0,
     include_session: bool = True,
+    min_duration_sec: float | None = None,
 ) -> dict[str, Any]:
     """Transpose the active set to ``target_key`` and bounce the result to a wav.
 
@@ -376,6 +377,24 @@ async def transpose_song(
             "stage": "length",
             "error": f"invalid song length {length_sec}",
         }
+
+    # Live's /live/song/get/song_length has been observed to return stale
+    # or truncated values right after a set is opened programmatically
+    # (e.g. via os.startfile of a synthesized .als) — the reported
+    # arrangement end can be materially shorter than the actual longest
+    # clip's end. That silently truncates the bounce.
+    #
+    # Callers who know the source-clip duration ahead of time can pass
+    # ``min_duration_sec`` as a floor; we take the max of that and the
+    # Live-reported length so the bounce captures the whole clip even
+    # when Live under-reports. No effect when Live's value is already
+    # larger.
+    if min_duration_sec is not None and min_duration_sec > length_sec:
+        log.info(
+            "clamping bounce duration UP: song_length=%.1fs, min_duration=%.1fs",
+            length_sec, min_duration_sec,
+        )
+        length_sec = float(min_duration_sec)
 
     if output_path is None:
         output_path = (

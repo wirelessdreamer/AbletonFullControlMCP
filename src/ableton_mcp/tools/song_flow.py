@@ -56,6 +56,7 @@ def register(mcp: FastMCP) -> None:
         direction: str = "auto",
         output_path: str | None = None,
         include_session: bool = True,
+        min_duration_sec: float | None = None,
     ) -> dict[str, Any]:
         """Transpose the arrangement to ``target_key`` (high quality, not chipmunk).
 
@@ -81,6 +82,13 @@ def register(mcp: FastMCP) -> None:
                              driven from Session view. Set False for
                              arrangement-only sets to skip the bridge calls
                              that enumerate session slots (small savings).
+            min_duration_sec: floor for the bounce duration in seconds. Live's
+                             ``/live/song/get/song_length`` has been observed
+                             to under-report right after a set is opened
+                             programmatically (e.g. via a synthesized .als),
+                             silently truncating the bounce. Pass the source
+                             clip's duration here to guarantee the bounce
+                             captures the whole song.
 
         Realtime cost: ~30 s slice bounce (only when source_key is auto)
         plus the full song bounce.
@@ -91,6 +99,7 @@ def register(mcp: FastMCP) -> None:
             direction=direction,
             output_path=output_path,
             include_session=include_session,
+            min_duration_sec=min_duration_sec,
         )
 
     @mcp.tool()
