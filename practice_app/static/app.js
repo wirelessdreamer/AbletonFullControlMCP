@@ -205,6 +205,8 @@ function practiceApp() {
     },
 
     async selectSong(song) {
+      const previousSongId = this.currentSong?.id;
+      const songChanged = previousSongId !== song?.id;
       this.currentSong = song;
       // Pick a sensible default instrument from what's available
       const avail = this.availableInstruments();
@@ -216,7 +218,10 @@ function practiceApp() {
       if (!song?.has_click && this.clickOn) this.clickOn = false;
       // Load chord sheet
       await this.loadSheet();
-      this.updateAudio();
+      // When switching to a different SONG (not just a boost/vocals
+      // variant of the same song), the old playback position doesn't
+      // translate — reset seek to the start.
+      this.updateAudio({ resetPosition: songChanged });
       this.updateClick();
     },
 
@@ -301,7 +306,7 @@ function practiceApp() {
       if (this.$refs.click) this.$refs.click.volume = this.clickVolume;
     },
 
-    updateAudio() {
+    updateAudio(opts = {}) {
       const audio = this.$refs.audio;
       if (!audio) { console.warn("[player] updateAudio: $refs.audio missing"); return; }
       const url = this.currentTrackUrl();
@@ -316,17 +321,22 @@ function practiceApp() {
         audio.load();
         return;
       }
-      // Preserve playback position if just swapping variants (same song)
+      // `resetPosition: true` is passed by selectSong when the song
+      // itself changed — start from 0 rather than preserving old time.
+      // The variant-swap case (Vocals/Boost toggles) leaves it false
+      // so playback keeps its position through the src swap.
       const wasPlaying = !audio.paused;
-      const prevTime = audio.currentTime;
+      const prevTime = opts.resetPosition ? 0 : audio.currentTime;
       // audio.src is the resolved absolute URL — compare via endsWith on the path
       const fullUrl = new URL(url, window.location.origin).href;
-      if (audio.src === fullUrl) return;  // no change
-      console.log("[player] loading:", url);
+      if (audio.src === fullUrl && !opts.resetPosition) return;  // no change
+      console.log("[player] loading:", url, opts.resetPosition ? "(reset to 0)" : "");
       audio.src = url;
       audio.load();
       audio.addEventListener("loadedmetadata", () => {
-        if (!isNaN(prevTime) && prevTime > 0 && prevTime < audio.duration) {
+        if (opts.resetPosition) {
+          audio.currentTime = 0;
+        } else if (!isNaN(prevTime) && prevTime > 0 && prevTime < audio.duration) {
           audio.currentTime = prevTime;
         }
         if (wasPlaying) audio.play().catch(err => console.error("[player] resume failed:", err));
