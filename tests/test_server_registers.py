@@ -55,6 +55,12 @@ async def test_server_builds_and_registers_tools() -> None:
         # Future-phase stubs
         "browser_search", "render_master", "sound_probe_device",
         "ableton_search_docs", "suno_generate",
+        # Planning Center chart metadata
+        "pco_library_probe", "pco_find_song", "pco_get_chart",
+        # Lyric-aligned section detection
+        "sections_detect", "sections_write_locators",
+        # Background bounce jobs
+        "bounce_job_status", "bounce_job_cancel", "bounce_job_list",
     }
     missing = expected - names
     assert not missing, f"missing tools: {sorted(missing)}"

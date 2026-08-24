@@ -128,6 +128,34 @@ Fixes:
 - Stop transport before bulk reads if you don't need them live.
 - Call `live_get_state` to confirm `is_playing=False` before fan-outs.
 
+## Bounce dies partway / orphaned `[bounce-temp]` recording
+
+Symptoms:
+- A long `bounce_*` call "times out" or vanishes mid-render.
+- A truncated `... [bounce-temp] ... .wav` shows up in the Live project's
+  `Samples/Recorded/` folder, shorter than the piece.
+- A stray `... [bounce-temp]` audio track may be left in the set.
+
+Why: realtime bounces take as long as the audio, and the **MCP client**
+(not this server, not Live) caps single tool calls. Observed caps vary by
+host: ~60 s in some, ~2 minutes before auto-backgrounding in recent
+Claude Code. When the client kills the call, the in-flight recording is
+abandoned wherever it was.
+
+Fixes:
+
+- Use the background job pattern for anything long:
+  `bounce_song(..., background=True)` → poll `bounce_job_status(job_id)`.
+  The tool call returns in milliseconds, so no client cap applies; only
+  one job runs at a time (Live has one transport).
+- The next bounce call automatically cleans up orphaned `[bounce-temp]`
+  tracks from a killed run; the stray wav in `Samples/Recorded/` is safe
+  to delete.
+- Foreground calls in Claude Code can additionally be protected by
+  raising `MCP_TOOL_TIMEOUT` (ms) in the environment Claude Code starts
+  with. A per-server `"timeout"` in `.mcp.json` is a hard wall that
+  progress notifications do NOT extend — don't set it low.
+
 ## "AbletonOSC did not reply on /live/test"
 
 The smoke test prints exactly this. Walk down:

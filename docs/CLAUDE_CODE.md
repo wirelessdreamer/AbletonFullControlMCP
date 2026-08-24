@@ -89,6 +89,38 @@ List my installed instruments.
   (`ableton_studio`, `ableton_laptop`) and change `ABLETON_OSC_HOST` per
   copy.
 
+## Long-running tools (bounces) and client timeouts
+
+Realtime bounces last as long as the audio — a 6-minute piece is a
+6-minute tool call — and **every MCP host puts some limit on a single
+tool call**. Observed behavior varies by host and version: some kill the
+call outright at ~60 s (leaving an orphaned, truncated
+`[bounce-temp]` recording), recent Claude Code builds move calls
+past ~2 minutes into a background task (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`,
+default 120000), and a per-server `"timeout"` field in `.mcp.json` is a
+hard wall that progress notifications do **not** extend.
+
+**Don't fight the wall — avoid it.** Every realtime bounce tool accepts
+`background=True`:
+
+```
+bounce_song(output_path=..., duration_sec=354, background=True)
+  → {status: "started", job_id: "..."}       (returns in milliseconds)
+bounce_job_status(job_id)                     (poll every ~10 s)
+  → {job: {state: "running", progress: 0.42, message: "recording ..."}}
+  → {job: {state: "done", result: {...}}}     (the full bounce result)
+```
+
+`bounce_job_cancel(job_id)` aborts cleanly (transport stopped, temp track
+deleted); `bounce_job_list()` recovers job ids. Only one bounce job runs
+at a time — Live has a single transport — so batch renders are
+start → poll → next. Use `background=True` for anything longer than
+~1 minute and for all unattended batch work.
+
+Belt-and-suspenders for *foreground* calls: raise Claude Code's own cap
+by setting `MCP_TOOL_TIMEOUT` (milliseconds) in the environment Claude
+Code starts with (e.g. the `env` block of `~/.claude/settings.json`).
+
 ## Troubleshooting
 
 ### `/mcp` shows the server but every call hangs
