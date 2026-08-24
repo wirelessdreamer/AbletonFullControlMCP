@@ -27,11 +27,13 @@ from .tools import (
     midi_files,
     midi_mapping,
     mix,
+    pco,
     presets,
     project,
     render,
     routing,
     scenes,
+    sections,
     semantics,
     sound_design,
     song_flow,
@@ -116,6 +118,11 @@ def build_server() -> FastMCP:
     # click synthesis. Two tools: song_click_track (WAV out) + song_detect_beats
     # (timestamps only).
     click_track.register(mcp)
+    # Planning Center Services — chart metadata (sections/lyrics/sequence/key).
+    pco.register(mcp)
+    # Lyric-aligned section detection — chart-vs-transcript correlation,
+    # sections.json sidecar, arrangement locators.
+    sections.register(mcp)
 
     return mcp
 

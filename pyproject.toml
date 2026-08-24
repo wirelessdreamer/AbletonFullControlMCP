@@ -67,6 +67,15 @@ practice_app = [
 click_track = [
     "beat_this>=1.1.0",
 ]
+# Lyric-aligned song section detection (PCO chart vs stable-ts transcription
+# of the Demucs vocal stem). stable-ts pulls openai-whisper, which requires
+# torch — the resolver accepts the venv's existing nightly cu128 build; after
+# installing, verify with `python -c "import torch; print(torch.__version__)"`
+# that it was left untouched (reinstall with --no-deps if not).
+song_sections = [
+    "stable-ts>=2.17",
+    "rapidfuzz>=3.6",
+]
 # Convenience: everything heavy at once.
 all-heavy = [
     "ableton-mcp[knowledge,musicgen]",
