@@ -73,6 +73,20 @@ Run inventory_scan_browser with category="instruments" and dry_run=True.
 List what you find.
 ```
 
+## Long-running tools (bounces)
+
+Claude Desktop enforces a short per-call timeout (observed around a
+minute) that progress notifications do not extend — long enough for
+edits and probes, **not** for a realtime bounce of a full song. Use the
+background job pattern instead: pass `background=True` to any realtime
+bounce tool, get a `job_id` back immediately, and poll
+`bounce_job_status(job_id)` until `state` is `done` (the full bounce
+result appears there). `bounce_job_cancel(job_id)` aborts cleanly. A
+call that was killed mid-bounce anyway leaves a truncated
+`... [bounce-temp] ...wav` in the project's `Samples/Recorded/` folder —
+the next bounce cleans up the orphaned temp track automatically; delete
+the stray wav whenever.
+
 ## Troubleshooting
 
 ### "Server failed to start"
