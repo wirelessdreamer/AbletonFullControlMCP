@@ -179,6 +179,20 @@ If either entry isn't in the Control Surface dropdown, step 2a didn't land — r
 
 The bounce pipeline (`bounce_song`, `bounce_tracks`, `bounce_enabled`) uses Live's built-in **Resampling** input — no extra setup beyond the two Control Surfaces above; install ffmpeg if you want mp3 alongside the wav.
 
+Two things worth knowing for long or batch renders:
+
+- **Resampling is realtime** (a 6-minute song takes 6 minutes), and MCP clients
+  cap single tool calls — so every realtime bounce tool accepts
+  `background=True`: it returns a `job_id` immediately and renders in a
+  server-side job (`bounce_job_status` / `bounce_job_cancel` /
+  `bounce_job_list`). See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+- **`mode="freeze"`** (`bounce_tracks`, `bounce_enabled`) renders offline at
+  ~2-4× realtime via `Track.freeze()`. It needs the Live set saved **once**
+  (ever — Live needs a project folder for `Samples/Freezing/`; unsaved
+  changes afterwards are fine), captures per-track pre-master signal, and
+  the wav length follows the track's clip span rather than a duration
+  argument.
+
 ### 3. (Optional) Build the knowledge index
 
 ```powershell

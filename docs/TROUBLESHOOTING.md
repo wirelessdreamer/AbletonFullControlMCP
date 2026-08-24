@@ -155,6 +155,34 @@ Fixes:
   raising `MCP_TOOL_TIMEOUT` (ms) in the environment Claude Code starts
   with. A per-server `"timeout"` in `.mcp.json` is a hard wall that
   progress notifications do NOT extend — don't set it low.
+- **SDK-driven sessions** (Claude Code launched with
+  `--input-format stream-json` by another program) can enforce the MCP
+  SDK's default ~60 s request timeout at a layer `MCP_TOOL_TIMEOUT` does
+  not reach — measured empirically: a foreground bounce died at ~58 s of
+  audio (+~2 s setup) with `MCP_TOOL_TIMEOUT=1800000` confirmed in the
+  environment. In such sessions the background job pattern is the ONLY
+  reliable path for long renders.
+- Faster than realtime entirely: `bounce_tracks(mode="freeze")` renders
+  offline at ~2-4×. Needs the set saved once (ever); per-track
+  pre-master signal; length follows the clip span.
+
+## Two python processes per MCP server — that's normal
+
+`Get-Process` shows each stdio server as TWO processes: the venv
+`\.venv\Scripts\python.exe` (a Windows launcher shim) and a child under
+the base interpreter (`AppData\...\Python311\python.exe`) that carries the
+venv's context. They are parent and child, not two contending servers —
+don't kill the "duplicate". A genuinely broken spawn shows up as the
+server *missing* from the process list, not doubled.
+
+## Only one process can drive Live's OSC at a time
+
+The OSC reply port (UDP/11001) is bound exclusively by whichever process
+first makes an OSC call — normally the MCP server. A standalone Python
+script driving `ableton_mcp.osc_client` directly cannot coexist with a
+running MCP server (it fails with `AbletonOSCAddressInUse`), and vice
+versa. Pick one driver at a time; when a standalone script holds the
+port, every MCP session's Live-touching tools will fail until it exits.
 
 ## "AbletonOSC did not reply on /live/test"
 

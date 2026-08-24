@@ -120,6 +120,16 @@ start → poll → next. Use `background=True` for anything longer than
 Belt-and-suspenders for *foreground* calls: raise Claude Code's own cap
 by setting `MCP_TOOL_TIMEOUT` (milliseconds) in the environment Claude
 Code starts with (e.g. the `env` block of `~/.claude/settings.json`).
+Caveat: in SDK-driven sessions (`--input-format stream-json`) the MCP
+SDK's ~60 s default request timeout can apply at a layer this env var
+does not reach — there, `background=True` is the only reliable path.
+
+Faster than realtime: `bounce_tracks(mode="freeze")` /
+`bounce_enabled(mode="freeze")` render offline at ~2-4× via
+`Track.freeze()`. Requires the Live set to have been saved **once**
+(ever — Live needs a project folder for `Samples/Freezing/`; later
+unsaved changes are fine, so a whole batch needs no further saves).
+Captures per-track pre-master signal; wav length follows the clip span.
 
 ## Troubleshooting
 

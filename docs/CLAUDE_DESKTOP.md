@@ -87,6 +87,10 @@ call that was killed mid-bounce anyway leaves a truncated
 the next bounce cleans up the orphaned temp track automatically; delete
 the stray wav whenever.
 
+For speed, `bounce_tracks(mode="freeze")` renders offline at ~2-4×
+realtime — the set must have been saved once (ever), output is per-track
+pre-master signal, and the wav length follows the clip span.
+
 ## Troubleshooting
 
 ### "Server failed to start"
