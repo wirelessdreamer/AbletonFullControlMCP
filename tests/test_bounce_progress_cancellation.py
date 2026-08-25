@@ -343,3 +343,56 @@ async def test_bounce_cancellation_emits_progress_up_to_point_of_cancel(
     # Final progress is below 1.0 (cancelled before complete).
     if events:
         assert max(p for p, _ in events) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Armed-track protection (regression: armed user tracks recorded over their
+# own arrangement clips during the bounce — data loss)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_armed_user_track_disarmed_during_record_and_rearmed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """An armed user track must be disarmed BEFORE record_mode goes on and
+    re-armed in cleanup; the engine's own temp track stays armed."""
+    osc = FakeOSC()
+    osc.track_names = ["UserTrack", "ArmedSynth"]
+    osc.arm[1] = 1  # user's armed track — the data-loss hazard
+    bridge = FakeBridge()
+    _wire_fakes(monkeypatch, osc, bridge)
+
+    await resampling.bounce_song_via_resampling(
+        tmp_path / "out.wav",
+        duration_sec=0.05, settle_sec=0.02,
+        clip_finalize_timeout_sec=0.5,
+    )
+
+    sends = osc.sent
+    disarm_idx = sends.index(("/live/track/set/arm", (1, 0)))
+    record_on_idx = sends.index(("/live/song/set/record_mode", (1,)))
+    assert disarm_idx < record_on_idx, "user track must be disarmed before record_mode=1"
+    rearm_idx = sends.index(("/live/track/set/arm", (1, 1)))
+    record_off_indices = [i for i, s in enumerate(sends) if s == ("/live/song/set/record_mode", (0,))]
+    assert rearm_idx > record_off_indices[-1] or rearm_idx > record_on_idx
+    # Re-armed at the end: final arm state restored.
+    assert osc.arm[1] == 1
+
+
+@pytest.mark.asyncio
+async def test_unarmed_user_tracks_left_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    osc = FakeOSC()
+    osc.track_names = ["UserTrack"]
+    bridge = FakeBridge()
+    _wire_fakes(monkeypatch, osc, bridge)
+
+    await resampling.bounce_song_via_resampling(
+        tmp_path / "out.wav",
+        duration_sec=0.05, settle_sec=0.02,
+        clip_finalize_timeout_sec=0.5,
+    )
+    # No disarm command was ever sent for the (unarmed) user track 0.
+    assert ("/live/track/set/arm", (0, 0)) not in osc.sent

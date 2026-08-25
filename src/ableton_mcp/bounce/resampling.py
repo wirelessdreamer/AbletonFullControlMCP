@@ -313,7 +313,31 @@ async def _record_arrangement_with_progress(
     cancelled before completing).
     """
     osc = await get_client()
+    disarmed: list[int] = []
     try:
+        # Disarm armed USER tracks before record_mode goes on. With
+        # arrangement record enabled, ANY armed track records during the
+        # bounce — observed data loss: armed MIDI tracks had their
+        # arrangement clips replaced by fresh empty takes. Our own temp
+        # capture tracks (identified by TEMP_TRACK_SUFFIX) must stay armed.
+        try:
+            names = await osc.request("/live/song/get/track_names")
+            for ti, name in enumerate(names):
+                if TEMP_TRACK_SUFFIX in str(name):
+                    continue
+                try:
+                    reply = await osc.request("/live/track/get/arm", ti)
+                    if int(reply[1]):
+                        osc.send("/live/track/set/arm", ti, 0)
+                        disarmed.append(ti)
+                except Exception:
+                    continue  # group/master-adjacent tracks may not expose arm
+            if disarmed:
+                log.info("disarmed user tracks for bounce: %s", disarmed)
+                await asyncio.sleep(0.1)  # let disarms land before record_mode
+        except Exception as exc:  # pragma: no cover — defensive
+            log.warning("could not enumerate/disarm armed tracks: %r", exc)
+
         osc.send("/live/song/stop_playing")
         await asyncio.sleep(0.1)
         # Park playhead at start_beat. AbletonOSC's current_song_time is
@@ -350,6 +374,8 @@ async def _record_arrangement_with_progress(
         try:
             osc.send("/live/song/stop_playing")
             osc.send("/live/song/set/record_mode", 0)
+            for ti in disarmed:
+                osc.send("/live/track/set/arm", ti, 1)
         except Exception:
             pass
 
