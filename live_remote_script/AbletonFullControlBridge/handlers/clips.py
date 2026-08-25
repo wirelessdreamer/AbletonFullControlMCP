@@ -49,6 +49,9 @@ EXPORTS = (
     "list_session_clip_slots",
     "_dir_track",
     "_probe_audio_clip_creation",
+    # WM_DROPFILES workaround for Live 11.3.x's broken create_audio_clip.
+    # See drop_wav_via_wmdropfiles docstring + docs/PRACTICE_PACK_WAV_LOAD_DEBUG.md.
+    "drop_wav_via_wmdropfiles",
 )
 
 
@@ -1148,4 +1151,234 @@ def duplicate_to_arrangement(c_instance, track_index=None, slot_index=None, time
         "length": length,
         "notes_copied": len(notes_tuple),
         "method": "manual_midi_copy",
+    }
+
+
+# ---------------------------------------------------------------------------
+# WM_DROPFILES workaround for Live 11.3.x's broken create_audio_clip.
+# ---------------------------------------------------------------------------
+#
+# On Live 11.3.43, ``Track.create_audio_clip(file_path, position)`` returns
+# None instead of creating a clip with the wav loaded. The bridge probes
+# three signature variants in ``create_arrangement_audio_clip`` (see line
+# ~595); all fail on this Live build.
+#
+# Workaround: programmatically post the same ``WM_DROPFILES`` Windows
+# message that Explorer fires when you drag-drop a file onto Live. Live's
+# native drop handler creates a new audio track at the drop point and
+# loads the wav into a fresh arrangement clip there. The bridge runs
+# inside Live's own process, so DROPFILES memory allocation + cross-thread
+# PostMessage is straightforward — no shared-memory across processes.
+#
+# Caller workflow (from ``song_flow/load_to_arrangement.py``):
+#   1. Take a project_describe snapshot to capture current track count.
+#   2. Call this handler with the wav path.
+#   3. Sleep briefly for Live to process the drop on its UI thread.
+#   4. Take another snapshot; the new track is at ``num_tracks - 1``.
+#   5. Rename the new track via OSC ``/live/track/set/name``.
+#
+# Windows-only. The handler returns ``{ok: false, error: ...}`` on every
+# other platform; the caller can decide whether to surface that as a
+# not_supported response or fall back to manual drag.
+
+
+def drop_wav_via_wmdropfiles(c_instance, file_path=None, drop_x=None,
+                              drop_y=None, **_):
+    """Post WM_DROPFILES to Live's main window with a single wav path.
+
+    STATUS (2026-08-25): NON-FUNCTIONAL in-bridge — Live 11's embedded
+    Python ships without the ``ctypes`` module, so this handler always
+    returns its structured import-failure error. Kept as documentation of
+    the approach; a working variant must run OUTSIDE Live's process (the
+    client side has full ctypes) and post the message cross-process.
+
+    Live's native drop handler will create a new audio track at the drop
+    point and place the wav into a new arrangement clip on that track.
+    The caller is expected to wait briefly, then identify the new track
+    via num_tracks growth and rename it via OSC.
+
+    Args:
+        file_path: absolute path to the wav file to drop.
+        drop_x / drop_y: screen coordinates for the drop point. When None
+            (default), we compute a point inside the upper-left quadrant
+            of Live's main window — typically the arrangement view in
+            Live's default layout. Override only if Live is in a custom
+            layout / view.
+
+    Returns:
+        On success::
+
+            {
+                "ok": True,
+                "hwnd": int,
+                "live_window_title": str,
+                "drop_point_screen": [x, y],
+                "file_path": str,
+            }
+
+        On failure::
+
+            {"ok": False, "error": str, "workaround": "drag manually"}
+
+        Does NOT raise — the caller wants structured data so it can
+        decide whether to retry, surface an error, or fall back.
+    """
+    import os
+    import sys
+
+    if sys.platform != "win32":
+        return {
+            "ok": False,
+            "error": "WM_DROPFILES is Windows-only; falling back to manual drag",
+            "workaround": "Drag the wav onto Live's arrangement view manually.",
+        }
+
+    fp = str(file_path or "")
+    if not fp:
+        return {"ok": False, "error": "file_path missing"}
+    fp = os.path.abspath(fp)
+    if not os.path.exists(fp):
+        return {"ok": False, "error": "file not found: %r" % fp}
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception as e:
+        return {"ok": False, "error": "ctypes/wintypes import failed: %s" % e}
+
+    # ---- Win32 setup ----
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    GMEM_MOVEABLE = 0x0002
+    WM_DROPFILES = 0x0233
+
+    class POINTL(ctypes.Structure):
+        _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    class DROPFILES(ctypes.Structure):
+        # See DROPFILES @ MSDN. Order + types must match the system struct.
+        _fields_ = [
+            ("pFiles", wintypes.DWORD),
+            ("pt", POINTL),
+            ("fNC", wintypes.BOOL),
+            ("fWide", wintypes.BOOL),
+        ]
+
+    # ---- Find Live's main window in our own process ----
+    our_pid = kernel32.GetCurrentProcessId()
+    found = []
+
+    EnumWindowsProc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL, wintypes.HWND, wintypes.LPARAM,
+    )
+
+    def _enum_cb(hwnd, _lparam):
+        try:
+            pid = wintypes.DWORD(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value != our_pid:
+                return True
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            title_len = user32.GetWindowTextLengthW(hwnd) + 1
+            buf = ctypes.create_unicode_buffer(title_len)
+            user32.GetWindowTextW(hwnd, buf, title_len)
+            title = buf.value
+            # Live's main window has a title like "Ableton Live 11 Suite -
+            # [Set Name]" or "Untitled" or "Ableton Live 12 ..." — match
+            # broadly so we don't break across versions.
+            if title and ("Ableton Live" in title or " - Ableton" in title):
+                found.append((hwnd, title))
+        except Exception:
+            pass
+        return True  # keep enumerating
+
+    user32.EnumWindows(EnumWindowsProc(_enum_cb), 0)
+    if not found:
+        # Fallback heuristic: the main window typically has the largest
+        # rect of all our top-level visible windows.
+        return {
+            "ok": False,
+            "error": (
+                "Couldn't find Live's main window by title. Tried "
+                "EnumWindows filtered by our PID + 'Ableton Live' in title."
+            ),
+            "workaround": "Drag the wav onto Live's arrangement view manually.",
+        }
+    hwnd, title = found[0]
+
+    # ---- Determine drop coordinates ----
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return {"ok": False, "error": "GetWindowRect failed for hwnd %d" % hwnd}
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    if drop_x is None:
+        # ~30% from the left edge — inside the arrangement view's timeline
+        # area in Live's default layout (avoids the device-pane / browser
+        # column on the right side).
+        drop_x = rect.left + int(width * 0.3)
+    if drop_y is None:
+        # ~55% from the top — middle of the arrangement track area, below
+        # the toolbar/scrubber and above the device chain bottom panel.
+        drop_y = rect.top + int(height * 0.55)
+    drop_x = int(drop_x)
+    drop_y = int(drop_y)
+
+    # ---- Build the DROPFILES payload ----
+    # Wide-char encoding (fWide=1). Each path is null-terminated, the
+    # whole list ends with an EXTRA null (double-null terminator).
+    paths_blob = (fp + "\x00") + "\x00"
+    paths_bytes = paths_blob.encode("utf-16-le")
+
+    struct_size = ctypes.sizeof(DROPFILES)
+    total_size = struct_size + len(paths_bytes)
+
+    # GlobalAlloc with GMEM_MOVEABLE so the system can manage the handle
+    # lifecycle after we hand it off via PostMessage.
+    h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, total_size)
+    if not h_mem:
+        return {"ok": False, "error": "GlobalAlloc(%d) failed" % total_size}
+
+    try:
+        p_mem = kernel32.GlobalLock(h_mem)
+        if not p_mem:
+            kernel32.GlobalFree(h_mem)
+            return {"ok": False, "error": "GlobalLock failed on h_mem"}
+        try:
+            df = DROPFILES.from_address(p_mem)
+            df.pFiles = struct_size
+            df.pt.x = drop_x - rect.left  # CLIENT-area coords
+            df.pt.y = drop_y - rect.top
+            df.fNC = 0
+            df.fWide = 1
+            # Copy the path data directly after the struct.
+            ctypes.memmove(p_mem + struct_size, paths_bytes, len(paths_bytes))
+        finally:
+            kernel32.GlobalUnlock(h_mem)
+
+        # PostMessage transfers ownership of h_mem to the receiver. If
+        # PostMessage fails we still own it and must GlobalFree.
+        ok = user32.PostMessageW(hwnd, WM_DROPFILES, h_mem, 0)
+        if not ok:
+            kernel32.GlobalFree(h_mem)
+            return {
+                "ok": False,
+                "error": "PostMessage WM_DROPFILES failed for hwnd %d" % hwnd,
+            }
+    except Exception as e:
+        # Best-effort cleanup on any unexpected exception.
+        try:
+            kernel32.GlobalFree(h_mem)
+        except Exception:
+            pass
+        return {"ok": False, "error": "unexpected: %s: %s" % (type(e).__name__, e)}
+
+    return {
+        "ok": True,
+        "hwnd": int(hwnd),
+        "live_window_title": title,
+        "drop_point_screen": [drop_x, drop_y],
+        "file_path": fp,
     }

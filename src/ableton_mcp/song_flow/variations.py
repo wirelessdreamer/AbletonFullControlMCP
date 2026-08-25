@@ -144,6 +144,9 @@ def make_variations(
             mix_paths, wav_path,
             normalize=normalize, headroom_db=headroom_db,
             gains_db=mix_gains,
+            # Practice packs are 44.1k/16-bit per the documented default —
+            # without this they inherit PCM_24 from 24-bit bounce sources.
+            subtype="PCM_16",
         )
         entry: dict[str, Any] = {
             "label": label,

@@ -350,7 +350,11 @@ def _system_ping(c_instance, **_):
 #           (Track.create_midi_clip wrapper) and clip.move_arrangement_clip
 #           (Clip.move wrapper). Enables "insert MIDI clip at bar N" and
 #           "move clip to bar M" workflows without manual UI drag.
-BRIDGE_VERSION = "1.4.0"
+#   1.5.0 — clip.drop_wav_via_wmdropfiles: posts WM_DROPFILES to Live's
+#           main window to drop a wav onto the arrangement programmatically.
+#           Workaround for Live 11.3.x's broken Track.create_audio_clip
+#           (returns None for absolute paths; see docs/PRACTICE_PACK_WAV_LOAD_DEBUG.md).
+BRIDGE_VERSION = "1.5.0"
 
 
 def _system_version(c_instance, _handler_table=None, **_):

@@ -25,6 +25,7 @@ def mix_stems_to_master(
     headroom_db: float = 0.1,
     target_samplerate: int | None = None,
     gains_db: Sequence[float] | None = None,
+    subtype: str = "PCM_24",
 ) -> dict[str, Any]:
     """Sum N stem WAVs into one mix WAV.
 
@@ -91,7 +92,7 @@ def mix_stems_to_master(
 
     out = Path(output_path).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(out), mix, sr, subtype="PCM_24")
+    sf.write(str(out), mix, sr, subtype=subtype)
 
     return {
         "output_path": str(out),
