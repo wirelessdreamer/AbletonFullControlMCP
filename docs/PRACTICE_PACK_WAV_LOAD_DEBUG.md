@@ -174,3 +174,21 @@ User wanted practice packs for these 3 songs, transposed down 2 semitones:
 - `C:\Users\dreamer\Downloads\TestSet\Psalm 13 - Long Enough.wav`
 
 Target output: `<input_dir>/practice_pack/down_2/<song>/` as 44.1 kHz 16-bit WAV per `~/.claude/skills/practice-pack/SKILL.md`.
+
+## Addendum (2026-08-25): WM_DROPFILES — both variants ruled out
+
+Two attempts to automate the drop programmatically, both dead ends:
+
+1. **In-bridge** (`clip.drop_wav_via_wmdropfiles`, shipped in bridge
+   1.5.0): Live 11's embedded Python has **no `ctypes` module** — the
+   handler can never build the DROPFILES struct. Kept as documentation.
+2. **Client-side** (full ctypes, correct 64-bit prototypes, message
+   confirmed posted to Live's main window): Live ignores `WM_DROPFILES`
+   entirely — no new track. Live registers **OLE drop targets**
+   (`IDropTarget`) and never calls `DragAcceptFiles`, so the legacy
+   message path is discarded. A working simulation would need a full OLE
+   `DoDragDrop` dance from an input thread — out of scope.
+
+Conclusion: on Live 11.3.43 the manual drag remains the only way to load
+a wav. The practice-pack flow asks the user to drag into a **session
+slot** and continues automatically from there (`song_transpose_session`).

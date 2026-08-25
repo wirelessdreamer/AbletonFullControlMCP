@@ -23,11 +23,58 @@ from ..song_flow import (
     import_variations_to_live,
     load_wav_to_arrangement,
     make_variations,
+    transpose_session_clip,
     transpose_song,
 )
+from .bounce import _start_background
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.tool()
+    async def song_transpose_session(
+        track_index: int,
+        slot_index: int,
+        target_key: str,
+        source_key: str,
+        direction: str = "auto",
+        output_path: str | None = None,
+        duration_sec: float | None = None,
+        background: bool = False,
+    ) -> dict[str, Any]:
+        """Transpose ONE session clip and bounce it — the arrangement-safe path.
+
+        Use this instead of ``song_transpose`` on Live 11.3.43: mutating
+        arrangement clips destroys them there (silent captures — see
+        docs/TROUBLESHOOTING.md "Transposed bounce comes back silent").
+        Workflow: the user drags the wav into a session slot, you stop
+        latched session clips on other tracks (track_stop_all_clips) and
+        mute content-bearing tracks, then call this. The clip is mutated
+        via the session APIs (Complex Pro warp + pitch), fired, captured
+        realtime, restored, and the result carries ``peak_dbfs`` — a
+        silent capture returns an error, never a fake success.
+
+        Realtime cost = the clip's duration; pass ``background=True`` for
+        anything long and poll ``bounce_job_status(job_id)``.
+
+        Args:
+            track_index / slot_index: the session clip (0-based).
+            target_key / source_key: tonics, e.g. "E" / "F". source_key is
+                required — no auto-detection on this path.
+            direction: "auto" (shortest), "up", or "down".
+            output_path: destination wav (default under <data>/song_flow/).
+            duration_sec: capture length override (default: clip length).
+            background: run as a job; returns {status:"started", job_id}.
+        """
+        async def _run(progress_cb) -> dict[str, Any]:
+            return await transpose_session_clip(
+                int(track_index), int(slot_index), target_key,
+                source_key=source_key, direction=direction,
+                output_path=output_path, duration_sec=duration_sec,
+            )
+
+        if background:
+            return _start_background("song_transpose_session", _run)
+        return await _run(None)
     @mcp.tool()
     async def song_analyze(
         output_dir: str | None = None,

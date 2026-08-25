@@ -15,7 +15,7 @@ from .analyze import analyze_song
 from .import_to_live import import_variations_to_live
 from .key import PITCH_CLASS, normalize_key, semitone_delta
 from .load_to_arrangement import load_wav_to_arrangement
-from .transpose import transpose_song
+from .transpose import transpose_session_clip, transpose_song
 from .variations import make_variations
 
 __all__ = [
@@ -26,5 +26,6 @@ __all__ = [
     "make_variations",
     "normalize_key",
     "semitone_delta",
+    "transpose_session_clip",
     "transpose_song",
 ]

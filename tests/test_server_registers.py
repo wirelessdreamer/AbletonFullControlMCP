@@ -61,6 +61,8 @@ async def test_server_builds_and_registers_tools() -> None:
         "sections_detect", "sections_write_locators",
         # Background bounce jobs
         "bounce_job_status", "bounce_job_cancel", "bounce_job_list",
+        # Session-clip transpose (arrangement-safe path)
+        "song_transpose_session",
     }
     missing = expected - names
     assert not missing, f"missing tools: {sorted(missing)}"
