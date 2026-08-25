@@ -143,8 +143,15 @@ class AbletonBridgeClient:
         payload = json.dumps({"id": req_id, "op": op, "args": args}, separators=(",", ":")) + "\n"
 
         try:
+            # limit: asyncio's default 64 KiB readline buffer is too small for
+            # replies carrying full note lists (a dense piano transcription
+            # clip serializes to hundreds of KB) — raise it to 32 MiB so
+            # clip.get_notes-style snapshots don't die with "Separator is
+            # not found, and chunk exceed the limit".
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self._cfg.host, self._cfg.port),
+                asyncio.open_connection(
+                    self._cfg.host, self._cfg.port, limit=32 * 1024 * 1024
+                ),
                 timeout=timeout,
             )
         except asyncio.TimeoutError as exc:
