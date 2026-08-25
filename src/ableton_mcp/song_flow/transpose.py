@@ -16,6 +16,7 @@ in ``live_remote_script/AbletonFullControlBridge/handlers/clips.py``
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -449,4 +450,145 @@ async def transpose_song(
         "clamped_clips": state.clamped,
         "restore_errors": restore_errors,
         "duration_sec": length_sec,
+    }
+
+
+async def transpose_session_clip(
+    track_index: int,
+    slot_index: int,
+    target_key: str,
+    source_key: str,
+    direction: str = "auto",
+    output_path: str | Path | None = None,
+    duration_sec: float | None = None,
+    bounce_tail_sec: float = 2.0,
+) -> dict[str, Any]:
+    """Transpose ONE session clip and bounce it — the arrangement-safe path.
+
+    Why this exists: mutating *arrangement* clips on Live 11.3.43 has been
+    observed to destroy them mid-bounce (silent captures, clips gone at
+    restore — see docs/TROUBLESHOOTING.md), and arrangement record punches
+    over armed tracks and tracks with active session slots. Scoping the
+    whole operation to a single fired session clip sidesteps every one of
+    those hazards: the clip is mutated via the well-tested session LOM
+    path, fired (session playback *is* the override, so nothing else needs
+    to follow the arrangement), captured with the resampling bounce, then
+    restored. Proven capture pattern: fire the clip, then let the bounce's
+    stop→seek→record→play sequence relaunch it.
+
+    The caller is responsible for silencing other tracks (mute them or
+    stop their session clips) — this function fires only
+    ``(track_index, slot_index)``.
+
+    Args:
+        track_index / slot_index: the session clip to transpose (the user
+            drags the wav into a session slot; Live 11.3.43 cannot load
+            audio clips programmatically).
+        target_key / source_key: tonics, e.g. ``"E"`` / ``"F"``.
+            ``source_key`` is required — this path never auto-detects.
+        direction: ``"auto"`` (shortest), ``"up"``, ``"down"``.
+        output_path: destination wav (default ``data/song_flow/<ts>/...``).
+        duration_sec: capture length. Default: the clip's beat length at
+            the current tempo.
+        bounce_tail_sec: extra capture after the clip's end (reverb ring).
+    """
+    target = normalize_key(target_key)
+    src = normalize_key(source_key)
+    delta = semitone_delta(src, target, direction=direction)  # type: ignore[arg-type]
+    if delta == 0:
+        return {
+            "status": "noop",
+            "reason": "source_key == target_key (after normalization)",
+            "source_key_used": src,
+            "target_key": target,
+            "semitone_delta": 0,
+        }
+
+    client = await get_client()
+    if duration_sec is None:
+        tempo = float((await client.request("/live/song/get/tempo"))[0])
+        reply = await client.request(
+            "/live/clip/get/length", int(track_index), int(slot_index)
+        )
+        length_beats = float(reply[2])
+        if tempo <= 0 or length_beats <= 0:
+            return {
+                "status": "error",
+                "stage": "length",
+                "error": f"could not derive duration (tempo={tempo}, "
+                         f"length_beats={length_beats}); pass duration_sec",
+            }
+        duration_sec = length_beats * 60.0 / tempo
+
+    if output_path is None:
+        output_path = (
+            Path("data/song_flow")
+            / time.strftime("%Y%m%d-%H%M%S")
+            / f"transposed_{target.replace('#', 'sharp')}.wav"
+        )
+    out_path = Path(output_path)
+
+    state = _State()
+    bounce_result: dict[str, Any] | None = None
+    transpose_error: str | None = None
+    try:
+        await _shift_one_clip(state, delta, track_index, slot_index, scope="session")
+        if not state.audio and not state.midi:
+            return {
+                "status": "error",
+                "stage": "clip",
+                "error": f"no clip found in session slot "
+                         f"({track_index}, {slot_index})",
+            }
+        client.send("/live/clip/fire", int(track_index), int(slot_index))
+        await asyncio.sleep(0.3)
+        bounce_result = await bounce_song_via_resampling(
+            str(out_path), duration_sec=float(duration_sec) + bounce_tail_sec,
+        )
+    except Exception as exc:
+        log.exception("transpose_session_clip mid-flight failure")
+        transpose_error = repr(exc)
+    finally:
+        try:
+            client.send("/live/clip/stop", int(track_index), int(slot_index))
+        except Exception:  # pragma: no cover — cleanup must not mask errors
+            pass
+        restore_errors = await _restore(state)
+
+    if transpose_error is not None:
+        return {
+            "status": "error",
+            "stage": "transpose_or_bounce",
+            "error": transpose_error,
+            "restore_errors": restore_errors,
+        }
+    if not (bounce_result and bounce_result.get("copied")):
+        return {
+            "status": "error",
+            "stage": "bounce",
+            "error": "bounce did not produce an output wav",
+            "bounce_result": bounce_result,
+            "restore_errors": restore_errors,
+        }
+    peak = bounce_result.get("peak_dbfs")
+    if peak is not None and peak < -90.0:
+        return {
+            "status": "error",
+            "stage": "silence_guard",
+            "error": f"capture is silent (peak {peak} dBFS) — the clip did "
+                     "not sound during the bounce; check routing/override "
+                     "state",
+            "bounce_result": bounce_result,
+            "restore_errors": restore_errors,
+        }
+
+    return {
+        "status": "ok",
+        "output_path": str(out_path.resolve()),
+        "source_key_used": src,
+        "target_key": target,
+        "semitone_delta": delta,
+        "duration_sec": float(duration_sec),
+        "peak_dbfs": peak,
+        "restore_errors": restore_errors,
     }

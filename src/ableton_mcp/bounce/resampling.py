@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 import shutil
@@ -522,32 +523,75 @@ async def _wait_for_clip_file_path(
     return None
 
 
+def wav_peak_dbfs(path: str | Path, block_frames: int = 44100 * 30) -> float | None:
+    """Whole-file peak in dBFS, or None if unreadable.
+
+    Cheap sanity signal for captures: a bounce that recorded silence
+    (arming/override/routing problems) peaks at ~-180 dBFS while any real
+    music peaks far above -90. Callers use this to fail loudly instead of
+    shipping a silent wav as success.
+    """
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        peak = 0.0
+        with sf.SoundFile(str(path)) as f:
+            while True:
+                block = f.read(block_frames)
+                if len(block) == 0:
+                    break
+                peak = max(peak, float(np.max(np.abs(block))))
+        return 20.0 * math.log10(max(peak, 1e-9))
+    except Exception as exc:  # pragma: no cover — diagnostics must not fail a bounce
+        log.debug("peak measurement failed for %s: %r", path, exc)
+        return None
+
+
+SILENCE_THRESHOLD_DBFS = -90.0
+
+
 async def _copy_or_skip(
     src: str | None,
     dst: str,
-    max_retries: int = 6,
+    max_retries: int = 15,
     retry_delay: float = 0.4,
 ) -> dict[str, Any]:
-    """Copy src→dst with retries — Live may briefly hold a lock after closing the clip."""
+    """Copy src→dst with retries — Live holds a lock while finalizing the
+    recorded clip, and long captures (a 9-minute bounce is a ~90 MB wav)
+    can take tens of seconds to finalize. Exponential backoff caps at 8 s
+    per wait, ~60 s total across the default 15 attempts."""
     if not src:
         return {"copied": False, "error": "no source path returned by bridge"}
     if not os.path.exists(src):
         return {"copied": False, "error": f"source wav not found: {src}"}
     Path(dst).parent.mkdir(parents=True, exist_ok=True)
     last_err: Exception | None = None
+    delay = retry_delay
     for attempt in range(max_retries):
         try:
             shutil.copy2(src, dst)
-            return {
+            result = {
                 "copied": True,
                 "source": src,
                 "output_path": dst,
                 "size_bytes": os.path.getsize(dst),
                 "attempts": attempt + 1,
             }
+            peak = wav_peak_dbfs(dst)
+            if peak is not None:
+                result["peak_dbfs"] = round(peak, 1)
+                if peak < SILENCE_THRESHOLD_DBFS:
+                    result["warning"] = (
+                        f"captured audio is SILENT (peak {peak:.1f} dBFS) — "
+                        "check track mutes/arming/session-override before "
+                        "trusting this bounce"
+                    )
+            return result
         except (PermissionError, OSError) as e:
             last_err = e
-            await asyncio.sleep(retry_delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 8.0)
     return {
         "copied": False,
         "source": src,
