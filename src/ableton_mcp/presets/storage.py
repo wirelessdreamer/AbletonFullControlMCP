@@ -15,12 +15,13 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from ..paths import data_dir
 from .library import LIBRARY, Preset
 
 
 # Default location, relative to repo root. Mirror of probe storage at
 # ``data/probes/``.
-DEFAULT_DB_PATH = Path("data/presets/library.sqlite")
+DEFAULT_DB_PATH = data_dir("presets") / "library.sqlite"
 
 
 _SCHEMA = """

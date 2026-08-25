@@ -166,6 +166,22 @@ Fixes:
   offline at ~2-4×. Needs the set saved once (ever); per-track
   pre-master signal; length follows the clip span.
 
+## Transposed bounce comes back silent
+
+On Live 11.3.43, mutating **arrangement** clips (warp/pitch via the
+bridge) has been observed to destroy them before the bounce records —
+the capture is digital silence (~-180 dBFS peak) and restore fails with
+"track has 0 arrangement clips". Until the arrangement path is fixed:
+
+- Use ``transpose_session_clip`` (song_flow.transpose): drag the wav
+  into a **session slot**, and the transpose mutates/fires/captures that
+  one session clip via the well-tested session APIs. Every capture also
+  now carries ``peak_dbfs``; silent results fail loudly.
+- Before any bounce, stop latched session clips on other tracks
+  (``/live/track/stop_all_clips``) — an active session slot both keeps
+  its track from playing the arrangement AND records its output over
+  that track's arrangement clips while record_mode is on.
+
 ## Two python processes per MCP server — that's normal
 
 `Get-Process` shows each stdio server as TWO processes: the venv

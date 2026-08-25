@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..paths import data_dir
+
 
 class StemsError(RuntimeError):
     pass
@@ -96,7 +98,7 @@ def _separate_sync(
 async def split_stems(
     audio_path: str,
     model: str = "htdemucs_6s",
-    out_dir: str | os.PathLike[str] = "data/stems",
+    out_dir: str | os.PathLike[str] | None = None,
     python_executable: str | None = None,  # ignored; kept for backwards compat
 ) -> list[StemFile]:
     """Split ``audio_path`` into stems using Demucs.
@@ -138,7 +140,9 @@ async def split_stems(
             "manual fallback: `pip install demucs>=4.0.1`."
         )
 
-    out = Path(out_dir)
+    # Default resolves through paths.data_dir — cwd-relative "data/stems"
+    # broke under MCP hosts that spawn the server in a protected directory.
+    out = Path(out_dir) if out_dir is not None else data_dir("stems")
     out.mkdir(parents=True, exist_ok=True)
 
     # Run the synchronous demucs work in a thread executor so we don't

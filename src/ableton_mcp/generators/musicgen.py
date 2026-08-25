@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..paths import data_dir
 from .base import GenResult, Generator, GeneratorError, GeneratorNotConfigured
 
 
@@ -25,11 +26,11 @@ class MusicGenGenerator(Generator):
     def __init__(
         self,
         model: str = "facebook/musicgen-small",
-        output_dir: str | os.PathLike[str] = "data/generated",
+        output_dir: str | os.PathLike[str] | None = None,
         python_executable: str | None = None,
     ) -> None:
         self._model = model
-        self._output_dir = Path(output_dir)
+        self._output_dir = Path(output_dir) if output_dir is not None else data_dir("generated")
         self._python = python_executable or sys.executable
 
     def is_configured(self) -> bool:

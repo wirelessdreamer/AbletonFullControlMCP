@@ -19,6 +19,7 @@ from typing import Any
 
 from ..bounce.resampling import bounce_song_via_resampling
 from ..osc_client import get_client
+from ..paths import data_dir
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ async def analyze_song(
         }
 
     if output_dir is None:
-        output_dir = Path("data/song_flow") / time.strftime("%Y%m%d-%H%M%S")
+        output_dir = data_dir("song_flow") / time.strftime("%Y%m%d-%H%M%S")
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sample_path = out_dir / "sample.wav"

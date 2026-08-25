@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from ..paths import data_dir
 from mcp.server.fastmcp import FastMCP
 
 from ..inventory import (
@@ -31,7 +32,7 @@ from ..inventory.scanner import PROBEABLE_CATEGORIES
 log = logging.getLogger(__name__)
 
 
-DEFAULT_MANIFEST_PATH = "data/inventory/manifest.json"
+DEFAULT_MANIFEST_PATH = str(data_dir("inventory") / "manifest.json")
 
 
 def _serialize_items(items: list[BrowserItem]) -> list[dict[str, Any]]:

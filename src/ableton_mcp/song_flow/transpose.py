@@ -26,6 +26,7 @@ from typing import Any
 from ..bounce.resampling import bounce_song_via_resampling
 from ..bridge_client import get_bridge_client
 from ..osc_client import get_client
+from ..paths import data_dir
 from .analyze import analyze_song
 from .key import normalize_key, semitone_delta
 
@@ -399,7 +400,7 @@ async def transpose_song(
 
     if output_path is None:
         output_path = (
-            Path("data/song_flow")
+            data_dir("song_flow")
             / time.strftime("%Y%m%d-%H%M%S")
             / f"transposed_{target_key.replace('#','sharp')}.wav"
         )
@@ -522,7 +523,7 @@ async def transpose_session_clip(
 
     if output_path is None:
         output_path = (
-            Path("data/song_flow")
+            data_dir("song_flow")
             / time.strftime("%Y%m%d-%H%M%S")
             / f"transposed_{target.replace('#', 'sharp')}.wav"
         )

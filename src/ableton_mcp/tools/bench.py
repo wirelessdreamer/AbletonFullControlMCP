@@ -22,6 +22,7 @@ from ..sound import (
     SweepPlanner,
     extract_features,
 )
+from ..paths import data_dir
 from ..synth_bench import SYNTH_REGISTRY, get, list_synths
 
 
@@ -77,12 +78,17 @@ def register(mcp: FastMCP) -> None:
     async def bench_render(
         synth_name: str,
         params: dict[str, float] | None = None,
-        output_path: str = "data/bench/render.wav",
+        output_path: str | None = None,
         sample_rate: int = 22050,
         duration_sec: float = 2.0,
         midi_note: int = 60,
     ) -> dict[str, Any]:
-        """Render a bench synth to a wav file. Defaults fill any unspecified param."""
+        """Render a bench synth to a wav file. Defaults fill any unspecified param.
+
+        ``output_path`` defaults to ``<data>/bench/render.wav``.
+        """
+        if output_path is None:
+            output_path = str(data_dir("bench") / "render.wav")
         import soundfile as sf
 
         if synth_name not in SYNTH_REGISTRY:
@@ -120,7 +126,7 @@ def register(mcp: FastMCP) -> None:
         params: list[str] | None = None,
         steps_per_param: int = 5,
         strategy: str = "grid",
-        output_path: str = "data/bench/probes.sqlite",
+        output_path: str | None = None,
         sample_rate: int = 22050,
         duration_sec: float = 2.0,
         midi_note: int = 60,
@@ -128,10 +134,14 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Run a full probe sweep across a bench synth and persist features.
 
+        ``output_path`` defaults to ``<data>/bench/probes.sqlite``.
+
         Uses the existing ``SweepPlanner`` + ``ProbeDataset`` so the resulting
         dataset is interchangeable with ``sound_match`` / ``sound_explain_parameter``
         queries — same on-disk schema as the real ``sound_probe_device``.
         """
+        if output_path is None:
+            output_path = str(data_dir("bench") / "probes.sqlite")
         if synth_name not in SYNTH_REGISTRY:
             return {"error": f"unknown synth {synth_name!r}; have {list_synths()}"}
 

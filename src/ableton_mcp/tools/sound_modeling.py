@@ -26,6 +26,7 @@ from typing import Any, Mapping
 import numpy as np
 from mcp.server.fastmcp import FastMCP
 
+from ..paths import data_dir
 from ..sound import (
     LiveRenderer,
     ProbeDataset,
@@ -155,7 +156,7 @@ def register(mcp: FastMCP) -> None:
         sample_rate: int = 22050,
         duration_sec: float = 2.0,
         midi_note: int = 60,
-        output_path: str = "data/probes/probes.sqlite",
+        output_path: str | None = None,
         seed: int | None = 0,
     ) -> dict[str, Any]:
         """Sweep a device's parameter space, extract features per cell, persist a probe dataset.
@@ -166,6 +167,8 @@ def register(mcp: FastMCP) -> None:
         fail with NotImplementedError until a Resampling-based capture path is
         added to ``LiveRenderer``.
         """
+        if output_path is None:
+            output_path = str(data_dir("probes") / "probes.sqlite")
         try:
             renderer = _resolve_renderer(
                 device_id, track_index, device_index, sample_rate, duration_sec

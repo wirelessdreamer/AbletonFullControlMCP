@@ -15,17 +15,17 @@ these tools return the audio paths + new track indices and a clear
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from ..generators import GeneratorError, GeneratorNotConfigured
 from ..generators import registry as gen_registry
+from ..paths import data_dir
 from ..osc_client import get_client
 from ..stems import demucs as stems_demucs
 
-DEFAULT_OUTPUT_DIR = Path("data/generated")
+DEFAULT_OUTPUT_DIR = data_dir("generated")
 
 
 def _result_to_dict(res: Any) -> dict[str, Any]:

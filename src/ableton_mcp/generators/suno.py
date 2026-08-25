@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from ..paths import data_dir
 from .base import GenResult, Generator, GeneratorError, GeneratorNotConfigured
 
 
@@ -29,11 +30,11 @@ class SunoGenerator(Generator):
         self,
         api_key: str | None = None,
         base_url: str | None = None,
-        output_dir: str | os.PathLike[str] = "data/generated",
+        output_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         self._api_key = api_key if api_key is not None else os.environ.get("SUNO_API_KEY")
         self._base_url = (base_url or os.environ.get("SUNO_API_BASE") or self.DEFAULT_BASE).rstrip("/")
-        self._output_dir = Path(output_dir)
+        self._output_dir = Path(output_dir) if output_dir is not None else data_dir("generated")
 
     def is_configured(self) -> bool:
         return bool(self._api_key)

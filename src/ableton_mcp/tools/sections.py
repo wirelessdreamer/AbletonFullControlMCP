@@ -17,6 +17,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..click_track import detect_beats as _detect_beats
+from ..paths import data_dir
 from ..pco import ChartModel, PCOClient, PCOError, PCONotConfigured
 from ..song_sections.detect import (
     detect_sections as _detect_sections,
@@ -31,7 +32,7 @@ from ..song_sections.transcribe import (
     transcribe_vocal as _transcribe_vocal,
 )
 
-DEFAULT_STEMS_ROOT = Path("data/stems")
+DEFAULT_STEMS_ROOT = data_dir("stems")
 DEFAULT_STEM_MODEL = "htdemucs_6s"
 
 
