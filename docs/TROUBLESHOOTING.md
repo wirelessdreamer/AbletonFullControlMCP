@@ -166,21 +166,25 @@ Fixes:
   offline at ~2-4×. Needs the set saved once (ever); per-track
   pre-master signal; length follows the clip span.
 
-## Transposed bounce comes back silent
+## Transposed bounce comes back silent / arrangement clips destroyed
 
-On Live 11.3.43, mutating **arrangement** clips (warp/pitch via the
-bridge) has been observed to destroy them before the bounce records —
-the capture is digital silence (~-180 dBFS peak) and restore fails with
-"track has 0 arrangement clips". Until the arrangement path is fixed:
+Root cause (verified by controlled experiment on Live 11.3.43): while
+``record_mode`` is on, **every track whose Session view has control
+records its session output over its arrangement clips — no arming
+required** (Live's session→arrangement punch recording). Tracks in that
+override state also don't *play* their arrangement, so the capture is
+digital silence (~-180 dBFS). Clip mutation via the bridge was
+exonerated by a step-by-step repro — mutate/restore alone never harms a
+clip.
 
-- Use ``transpose_session_clip`` (song_flow.transpose): drag the wav
-  into a **session slot**, and the transpose mutates/fires/captures that
-  one session clip via the well-tested session APIs. Every capture also
-  now carries ``peak_dbfs``; silent results fail loudly.
-- Before any bounce, stop latched session clips on other tracks
-  (``/live/track/stop_all_clips``) — an active session slot both keeps
-  its track from playing the arrangement AND records its output over
-  that track's arrangement clips while record_mode is on.
+Since bounce engine ``e172010`` this is handled automatically: the
+recorder stops session clips on all non-temp tracks and returns
+arrangement control before enabling record (session-fired capture paths
+opt out and delete the punched clip afterwards, bridge 1.6.0+). Every
+capture carries ``peak_dbfs``; silent results fail loudly. For
+transposition prefer ``transpose_session_clip`` / the
+``song_transpose_session`` tool — it never touches arrangement clips at
+all.
 
 ## Two python processes per MCP server — that's normal
 
