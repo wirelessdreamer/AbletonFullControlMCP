@@ -97,7 +97,7 @@ def register(mcp: FastMCP) -> None:
         return {"duplicated_from": scene_index}
 
     @mcp.tool()
-    async def scene_fire(scene_index: int) -> dict[str, int]:
+    async def scene_fire(scene_index: int) -> dict[str, Any]:
         """Launch every clip on a scene."""
         (await get_client()).send("/live/scene/fire", int(scene_index))
         return {"scene": scene_index, "status": "fired"}
@@ -109,7 +109,7 @@ def register(mcp: FastMCP) -> None:
         return {"status": "selected_scene_fired"}
 
     @mcp.tool()
-    async def scene_fire_as_selected(scene_index: int) -> dict[str, int]:
+    async def scene_fire_as_selected(scene_index: int) -> dict[str, Any]:
         """Select a scene and launch it (advances the selection per Live's setting)."""
         (await get_client()).send("/live/scene/fire_as_selected", int(scene_index))
         return {"scene": scene_index, "status": "fired_as_selected"}

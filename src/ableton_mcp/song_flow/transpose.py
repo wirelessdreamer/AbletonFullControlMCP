@@ -532,6 +532,20 @@ async def transpose_session_clip(
     state = _State()
     bounce_result: dict[str, Any] | None = None
     transpose_error: str | None = None
+    bridge = get_bridge_client()
+
+    # Snapshot the fired track's arrangement clips: while record_mode is on,
+    # the playing session clip PUNCHES its output into this track's
+    # arrangement (Live behavior, no arming required). We diff afterwards
+    # and delete what the punch created.
+    try:
+        pre = await bridge.call(
+            "clip.list_arrangement_clips", track_index=int(track_index)
+        )
+        pre_count = len(pre.get("clips", []))
+    except Exception:  # pragma: no cover — snapshot is best-effort
+        pre_count = None
+
     try:
         await _shift_one_clip(state, delta, track_index, slot_index, scope="session")
         if not state.audio and not state.midi:
@@ -543,8 +557,12 @@ async def transpose_session_clip(
             }
         client.send("/live/clip/fire", int(track_index), int(slot_index))
         await asyncio.sleep(0.3)
+        # stop_session_clips=False: OUR fired clip must keep playing. The
+        # recorder still disarms armed tracks; other tracks' session clips
+        # are the caller's responsibility (stop them before calling).
         bounce_result = await bounce_song_via_resampling(
             str(out_path), duration_sec=float(duration_sec) + bounce_tail_sec,
+            stop_session_clips=False,
         )
     except Exception as exc:
         log.exception("transpose_session_clip mid-flight failure")
@@ -556,12 +574,37 @@ async def transpose_session_clip(
             pass
         restore_errors = await _restore(state)
 
+    # Punch cleanup: delete arrangement clips the record pass created on
+    # the fired track (newest-first so indices stay valid).
+    punch_warnings: list[str] = []
+    if pre_count is not None:
+        try:
+            post = await bridge.call(
+                "clip.list_arrangement_clips", track_index=int(track_index)
+            )
+            post_count = len(post.get("clips", []))
+            for ci in range(post_count - 1, pre_count - 1, -1):
+                try:
+                    await bridge.call(
+                        "clip.delete_arrangement_clip",
+                        track_index=int(track_index), clip_index=ci,
+                    )
+                except Exception as exc:
+                    punch_warnings.append(
+                        f"punched arrangement clip {ci} on track {track_index} "
+                        f"could not be deleted ({exc}) — remove it manually "
+                        f"(bridge 1.6.0+ required for auto-cleanup)"
+                    )
+        except Exception as exc:  # pragma: no cover
+            punch_warnings.append(f"punch-cleanup check failed: {exc}")
+
     if transpose_error is not None:
         return {
             "status": "error",
             "stage": "transpose_or_bounce",
             "error": transpose_error,
             "restore_errors": restore_errors,
+            "warnings": punch_warnings,
         }
     if not (bounce_result and bounce_result.get("copied")):
         return {
@@ -570,6 +613,7 @@ async def transpose_session_clip(
             "error": "bounce did not produce an output wav",
             "bounce_result": bounce_result,
             "restore_errors": restore_errors,
+            "warnings": punch_warnings,
         }
     peak = bounce_result.get("peak_dbfs")
     if peak is not None and peak < -90.0:
@@ -581,6 +625,7 @@ async def transpose_session_clip(
                      "state",
             "bounce_result": bounce_result,
             "restore_errors": restore_errors,
+            "warnings": punch_warnings,
         }
 
     return {
@@ -592,4 +637,5 @@ async def transpose_session_clip(
         "duration_sec": float(duration_sec),
         "peak_dbfs": peak,
         "restore_errors": restore_errors,
+        "warnings": punch_warnings,
     }

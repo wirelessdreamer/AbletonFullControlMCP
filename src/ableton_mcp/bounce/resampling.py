@@ -299,6 +299,7 @@ async def _record_arrangement_with_progress(
     progress_start: float = 0.0,
     progress_end: float = 1.0,
     poll_interval_sec: float = 1.0,
+    stop_session_clips: bool = True,
 ) -> None:
     """Record the arrangement for ``duration_sec`` seconds, emitting
     periodic progress notifications mapped onto [progress_start,
@@ -336,6 +337,24 @@ async def _record_arrangement_with_progress(
             if disarmed:
                 log.info("disarmed user tracks for bounce: %s", disarmed)
                 await asyncio.sleep(0.1)  # let disarms land before record_mode
+
+            # Session-punch protection. While record_mode is on, EVERY
+            # track whose Session view has control records its session
+            # output over its arrangement clips — no arming required
+            # (verified on Live 11.3.43: an unarmed track's arrangement
+            # MIDI was replaced by the playing session clip's content
+            # during a 3 s record pass, and stopping clips + returning
+            # arrangement control fully prevented it). Overridden tracks
+            # also don't PLAY their arrangement, silencing the capture.
+            # Session-fired capture paths (transpose_session_clip) pass
+            # stop_session_clips=False — their fired clip must keep
+            # playing; they accept and clean up the punch on that track.
+            if stop_session_clips:
+                for ti, name in enumerate(names):
+                    if TEMP_TRACK_SUFFIX not in str(name):
+                        osc.send("/live/track/stop_all_clips", ti)
+                osc.send("/live/song/set/back_to_arranger", 0)
+                await asyncio.sleep(0.1)
         except Exception as exc:  # pragma: no cover — defensive
             log.warning("could not enumerate/disarm armed tracks: %r", exc)
 
@@ -631,6 +650,7 @@ async def bounce_song_via_resampling(
     cleanup_temp_track: bool = True,
     clip_finalize_timeout_sec: float = DEFAULT_CLIP_FINALIZE_TIMEOUT_SEC,
     progress_callback: ProgressCallback | None = None,
+    stop_session_clips: bool = True,
 ) -> dict[str, Any]:
     """Capture the master mix to ``output_path`` via a Resampling track.
 
@@ -699,6 +719,7 @@ async def bounce_song_via_resampling(
             start_beat=start_beat,
             progress_callback=progress_callback,
             progress_start=0.08, progress_end=0.85,
+            stop_session_clips=stop_session_clips,
         )
         await _report(progress_callback, 0.85, "recording complete; harvesting clip")
         src = await _wait_for_clip_file_path(

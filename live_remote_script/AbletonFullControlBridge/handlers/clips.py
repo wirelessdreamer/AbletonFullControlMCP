@@ -26,6 +26,7 @@ EXPORTS = (
     "crop",
     "reverse",
     "duplicate_to_arrangement",
+    "delete_arrangement_clip",
     "arrangement_clip_info",
     "get_arrangement_pitch_state",
     "set_arrangement_warp",
@@ -1382,3 +1383,27 @@ def drop_wav_via_wmdropfiles(c_instance, file_path=None, drop_x=None,
         "drop_point_screen": [drop_x, drop_y],
         "file_path": fp,
     }
+
+
+def delete_arrangement_clip(c_instance, track_index=None, clip_index=0, **_):
+    """Delete one clip from the arrangement timeline (Live 11+).
+
+    Added for session-fired bounce cleanup: while record_mode is on, a
+    playing session clip punches its output into that track's arrangement
+    (no arming required — verified on Live 11.3.43). Capture paths that
+    deliberately keep a session clip firing use this to remove the
+    punched arrangement clip afterwards.
+    """
+    track = _track(int(track_index))
+    clips = list(track.arrangement_clips)
+    ci = int(clip_index)
+    if ci < 0 or ci >= len(clips):
+        raise ValueError(
+            "clip_index %d out of range; track has %d arrangement clips"
+            % (ci, len(clips))
+        )
+    if not hasattr(track, "delete_clip"):
+        raise RuntimeError("Track.delete_clip not available in this Live version")
+    track.delete_clip(clips[ci])
+    return {"track_index": int(track_index), "deleted_clip_index": ci,
+            "remaining": len(list(track.arrangement_clips))}

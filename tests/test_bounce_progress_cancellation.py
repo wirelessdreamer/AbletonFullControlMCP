@@ -396,3 +396,60 @@ async def test_unarmed_user_tracks_left_alone(
     )
     # No disarm command was ever sent for the (unarmed) user track 0.
     assert ("/live/track/set/arm", (0, 0)) not in osc.sent
+
+
+# ---------------------------------------------------------------------------
+# Session-punch protection (regression: session clips playing during
+# record_mode punched their output over arrangement clips — no arming
+# required; verified on Live 11.3.43)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_clips_stopped_and_arranger_restored_before_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    osc = FakeOSC()
+    osc.track_names = ["UserA", "UserB"]
+    bridge = FakeBridge()
+    _wire_fakes(monkeypatch, osc, bridge)
+
+    await resampling.bounce_song_via_resampling(
+        tmp_path / "out.wav",
+        duration_sec=0.05, settle_sec=0.02,
+        clip_finalize_timeout_sec=0.5,
+    )
+
+    sends = osc.sent
+    record_on = sends.index(("/live/song/set/record_mode", (1,)))
+    stop_a = sends.index(("/live/track/stop_all_clips", (0,)))
+    stop_b = sends.index(("/live/track/stop_all_clips", (1,)))
+    bta = sends.index(("/live/song/set/back_to_arranger", (0,)))
+    assert stop_a < record_on and stop_b < record_on, \
+        "session clips must be stopped before record_mode=1"
+    assert bta < record_on, "arrangement control must be restored before record"
+    # The engine's own temp track (suffix-named) is NOT clip-stopped.
+    temp_indices = [i for i, n in enumerate(osc.track_names)
+                    if resampling.TEMP_TRACK_SUFFIX in n]
+    for ti in temp_indices:
+        assert ("/live/track/stop_all_clips", (ti,)) not in sends
+
+
+@pytest.mark.asyncio
+async def test_stop_session_clips_false_skips_protection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Session-fired capture paths keep their fired clip playing."""
+    osc = FakeOSC()
+    osc.track_names = ["UserA"]
+    bridge = FakeBridge()
+    _wire_fakes(monkeypatch, osc, bridge)
+
+    await resampling.bounce_song_via_resampling(
+        tmp_path / "out.wav",
+        duration_sec=0.05, settle_sec=0.02,
+        clip_finalize_timeout_sec=0.5,
+        stop_session_clips=False,
+    )
+    assert not any(s[0] == "/live/track/stop_all_clips" for s in osc.sent)
+    assert not any(s[0] == "/live/song/set/back_to_arranger" for s in osc.sent)

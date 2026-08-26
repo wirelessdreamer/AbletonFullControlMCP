@@ -354,7 +354,9 @@ def _system_ping(c_instance, **_):
 #           main window to drop a wav onto the arrangement programmatically.
 #           Workaround for Live 11.3.x's broken Track.create_audio_clip
 #           (returns None for absolute paths; see docs/PRACTICE_PACK_WAV_LOAD_DEBUG.md).
-BRIDGE_VERSION = "1.5.0"
+#   1.6.0 — clip.delete_arrangement_clip: remove one arrangement clip
+#           (session-fired bounce punch cleanup).
+BRIDGE_VERSION = "1.6.0"
 
 
 def _system_version(c_instance, _handler_table=None, **_):

@@ -146,7 +146,7 @@ def register(mcp: FastMCP) -> None:
                 "dry_run": False}
 
     @mcp.tool()
-    async def clip_duplicate_loop(track_index: int, clip_index: int) -> dict[str, int]:
+    async def clip_duplicate_loop(track_index: int, clip_index: int) -> dict[str, Any]:
         """Duplicate the clip's loop region to extend its content."""
         (await get_client()).send(
             "/live/clip/duplicate_loop", int(track_index), int(clip_index)
@@ -156,13 +156,13 @@ def register(mcp: FastMCP) -> None:
     # --- Transport / launch ---
 
     @mcp.tool()
-    async def clip_fire(track_index: int, clip_index: int) -> dict[str, int]:
+    async def clip_fire(track_index: int, clip_index: int) -> dict[str, Any]:
         """Trigger a clip."""
         (await get_client()).send("/live/clip/fire", int(track_index), int(clip_index))
         return {"track_index": track_index, "clip_index": clip_index, "status": "fired"}
 
     @mcp.tool()
-    async def clip_stop(track_index: int, clip_index: int) -> dict[str, int]:
+    async def clip_stop(track_index: int, clip_index: int) -> dict[str, Any]:
         """Stop a clip."""
         (await get_client()).send("/live/clip/stop", int(track_index), int(clip_index))
         return {"track_index": track_index, "clip_index": clip_index, "status": "stopped"}

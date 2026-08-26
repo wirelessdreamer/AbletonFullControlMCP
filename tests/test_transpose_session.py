@@ -72,12 +72,22 @@ class FakeOSC:
 
 
 class FakeBridge:
-    """Session-scope pitch-state handlers for one audio clip."""
+    """Session-scope pitch-state handlers + arrangement punch bookkeeping."""
 
-    def __init__(self, is_empty: bool = False):
+    def __init__(self, is_empty: bool = False, punched_clips: int = 0):
         self.is_empty = is_empty
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.pitch_coarse = 0
+        # Arrangement clips on the fired track: starts empty; after the
+        # "bounce" the punch adds `punched_clips` new ones.
+        self.arrangement_clips = 0
+        self._punched_clips = punched_clips
+        self._bounced = False
+        self.deleted: list[int] = []
+
+    def simulate_punch(self) -> None:
+        self.arrangement_clips += self._punched_clips
+        self._bounced = True
 
     async def call(self, op: str, **kwargs: Any):
         self.calls.append((op, kwargs))
@@ -96,6 +106,12 @@ class FakeBridge:
             return {}
         if op in ("clip.set_session_warp", "clip.set_session_warp_mode"):
             return {}
+        if op == "clip.list_arrangement_clips":
+            return {"clips": [{"clip_index": i} for i in range(self.arrangement_clips)]}
+        if op == "clip.delete_arrangement_clip":
+            self.deleted.append(kwargs["clip_index"])
+            self.arrangement_clips -= 1
+            return {"deleted_clip_index": kwargs["clip_index"]}
         raise AssertionError(f"unexpected bridge op {op}")
 
 
@@ -110,7 +126,9 @@ def _wire(monkeypatch: pytest.MonkeyPatch, osc: FakeOSC, bridge: FakeBridge,
     bounce_calls: list[dict[str, Any]] = []
 
     async def fake_bounce(output_path: str, duration_sec: float, **kw: Any):
-        bounce_calls.append({"output_path": output_path, "duration_sec": duration_sec})
+        bounce_calls.append({"output_path": output_path,
+                             "duration_sec": duration_sec, **kw})
+        bridge.simulate_punch()
         return dict(bounce_result)
 
     monkeypatch.setattr(tr, "get_client", fake_get_client)
@@ -182,3 +200,50 @@ async def test_bounce_failure_restores(
     assert r["stage"] == "bounce"
     assert bridge.pitch_coarse == 0
     assert ("/live/clip/stop", 3, 0) in osc.sent
+
+
+async def test_bounce_keeps_session_clips_playing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The session path must opt OUT of the recorder's clip-stopping."""
+    osc, bridge = FakeOSC(), FakeBridge()
+    calls = _wire(monkeypatch, osc, bridge,
+                  {"copied": True, "peak_dbfs": -12.0, "output_path": "x"})
+    await tr.transpose_session_clip(3, 0, "E", "F", output_path=tmp_path / "o.wav")
+    assert calls[0]["stop_session_clips"] is False
+
+
+async def test_punched_arrangement_clips_deleted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Record punches the fired session clip into the arrangement — the
+    new arrangement clips must be deleted afterwards."""
+    osc, bridge = FakeOSC(), FakeBridge(punched_clips=2)
+    _wire(monkeypatch, osc, bridge,
+          {"copied": True, "peak_dbfs": -12.0, "output_path": "x"})
+    r = await tr.transpose_session_clip(3, 0, "E", "F", output_path=tmp_path / "o.wav")
+    assert r["status"] == "ok"
+    assert bridge.deleted == [1, 0]  # newest-first so indices stay valid
+    assert bridge.arrangement_clips == 0
+    assert r["warnings"] == []
+
+
+async def test_punch_delete_failure_warns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Old bridge without delete_arrangement_clip: warn, don't fail."""
+    osc, bridge = FakeOSC(), FakeBridge(punched_clips=1)
+
+    orig_call = bridge.call
+
+    async def call_no_delete(op: str, **kwargs: Any):
+        if op == "clip.delete_arrangement_clip":
+            raise RuntimeError("unknown op")
+        return await orig_call(op, **kwargs)
+
+    bridge.call = call_no_delete  # type: ignore[method-assign]
+    _wire(monkeypatch, osc, bridge,
+          {"copied": True, "peak_dbfs": -12.0, "output_path": "x"})
+    r = await tr.transpose_session_clip(3, 0, "E", "F", output_path=tmp_path / "o.wav")
+    assert r["status"] == "ok"
+    assert any("remove it manually" in w for w in r["warnings"])

@@ -256,13 +256,13 @@ def register(mcp: FastMCP) -> None:
     # --- Quantization & groove ---
 
     @mcp.tool()
-    async def live_set_clip_trigger_quantization(value: int) -> dict[str, int]:
+    async def live_set_clip_trigger_quantization(value: int) -> dict[str, Any]:
         """Set the global clip trigger quantization (Live enum int 0..13; 0=None, 4=1/1, etc.)."""
         (await get_client()).send("/live/song/set/clip_trigger_quantization", int(value))
         return {"clip_trigger_quantization": value, "values_legend": QUANTIZATION_VALUES}
 
     @mcp.tool()
-    async def live_set_midi_recording_quantization(value: int) -> dict[str, int]:
+    async def live_set_midi_recording_quantization(value: int) -> dict[str, Any]:
         """Set the global MIDI recording quantization (same enum as trigger quantization)."""
         (await get_client()).send("/live/song/set/midi_recording_quantization", int(value))
         return {"midi_recording_quantization": value, "values_legend": QUANTIZATION_VALUES}

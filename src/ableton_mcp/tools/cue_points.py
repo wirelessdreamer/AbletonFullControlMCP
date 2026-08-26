@@ -28,7 +28,7 @@ def register(mcp: FastMCP) -> None:
         return {"status": "toggled"}
 
     @mcp.tool()
-    async def cue_point_jump(cue_point_index: int) -> dict[str, int]:
+    async def cue_point_jump(cue_point_index: int) -> dict[str, Any]:
         """Jump arrangement playback to a numbered cue point."""
         (await get_client()).send("/live/song/cue_point/jump", int(cue_point_index))
         return {"cue_point": cue_point_index, "status": "jumped"}
