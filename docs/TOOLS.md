@@ -3651,19 +3651,30 @@ Produce instrument-up remixes (or practice-pack tracks) from a stem set.
         two variants per non-vocal instrument (so a player can rehearse
         with or without the singer's part audible):
 
+        - ``original.wav``                      — unaltered reference mix
         - ``no_vocals.wav``                    — instrumental backing
         - ``<stem>_boost_no_vocals.wav``       — focal +boost, others -duck,
                                                   vocals dropped
         - ``<stem>_boost_with_vocals.wav``     — same focal/non-vocal balance
                                                   but with vocals at unity
 
-        With a 6-stem split (5 instrument stems + 1 vocals) that's 11 wavs.
+        With a 6-stem split that's 12 wavs (original + no_vocals + 5x2 boosts).
 
         ``name_prefix`` is prepended to every output filename — useful for
         batching multiple songs into one directory (e.g. ``"Reasons - "``).
 
         Pure file-on-disk math — no Live, no realtime. mp3 encoding is
         opt-in and best-effort.
+
+        Cost scales with song length x variation count: a 9-minute song
+        with a 6-stem split is 11 mixes plus mp3 encodes, i.e. minutes of
+        CPU — past most MCP clients' per-call timeout. Pass
+        ``background=True`` to get ``{status: "started", job_id}`` back
+        immediately and poll ``bounce_job_status(job_id)``; the full
+        result dict appears there when ``state`` is ``"done"``. These
+        jobs are NOT transport-exclusive, so they run happily alongside a
+        bounce. Either way the mixing runs in a worker thread, so the
+        server stays responsive.
 
 **Parameters**
 
@@ -3677,6 +3688,7 @@ Produce instrument-up remixes (or practice-pack tracks) from a stem set.
 | `name_prefix` | `string` | no | — |
 | `encode_mp3` | `boolean` | no | True |
 | `bitrate_kbps` | `integer` | no | 192 |
+| `background` | `boolean` | no | False |
 
 
 ### `song_transpose`

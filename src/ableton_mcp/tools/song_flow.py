@@ -14,6 +14,7 @@ orchestrates these conversationally.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -159,6 +160,7 @@ def register(mcp: FastMCP) -> None:
         name_prefix: str = "",
         encode_mp3: bool = True,
         bitrate_kbps: int = 192,
+        background: bool = False,
     ) -> dict[str, Any]:
         """Produce instrument-up remixes (or practice-pack tracks) from a stem set.
 
@@ -179,30 +181,58 @@ def register(mcp: FastMCP) -> None:
         two variants per non-vocal instrument (so a player can rehearse
         with or without the singer's part audible):
 
+        - ``original.wav``                      — unaltered reference mix
         - ``no_vocals.wav``                    — instrumental backing
         - ``<stem>_boost_no_vocals.wav``       — focal +boost, others -duck,
                                                   vocals dropped
         - ``<stem>_boost_with_vocals.wav``     — same focal/non-vocal balance
                                                   but with vocals at unity
 
-        With a 6-stem split (5 instrument stems + 1 vocals) that's 11 wavs.
+        With a 6-stem split that's 12 wavs (original + no_vocals + 5x2 boosts).
 
         ``name_prefix`` is prepended to every output filename — useful for
         batching multiple songs into one directory (e.g. ``"Reasons - "``).
 
         Pure file-on-disk math — no Live, no realtime. mp3 encoding is
         opt-in and best-effort.
+
+        Cost scales with song length x variation count: a 9-minute song
+        with a 6-stem split is 11 mixes plus mp3 encodes, i.e. minutes of
+        CPU — past most MCP clients' per-call timeout. Pass
+        ``background=True`` to get ``{status: "started", job_id}`` back
+        immediately and poll ``bounce_job_status(job_id)``; the full
+        result dict appears there when ``state`` is ``"done"``. These
+        jobs are NOT transport-exclusive, so they run happily alongside a
+        bounce. Either way the mixing runs in a worker thread, so the
+        server stays responsive.
         """
-        return make_variations(
-            stems,
-            output_dir,
-            boost_db=boost_db,
-            attenuation_db=attenuation_db,
-            output_set=output_set,
-            name_prefix=name_prefix,
-            encode_mp3=encode_mp3,
-            bitrate_kbps=bitrate_kbps,
-        )
+        def _work() -> dict[str, Any]:
+            return make_variations(
+                stems,
+                output_dir,
+                boost_db=boost_db,
+                attenuation_db=attenuation_db,
+                output_set=output_set,
+                name_prefix=name_prefix,
+                encode_mp3=encode_mp3,
+                bitrate_kbps=bitrate_kbps,
+            )
+
+        async def _run(progress_cb: Any = None) -> dict[str, Any]:
+            if progress_cb is not None:
+                await progress_cb(
+                    0.0, f"mixing {output_set} variations (no per-file progress)"
+                )
+            # Off the event loop: make_variations is synchronous and can
+            # run for minutes, which would otherwise stall every other
+            # MCP call (including bounce_job_status polling).
+            return await asyncio.to_thread(_work)
+
+        if background:
+            return _start_background(
+                "song_make_variations", _run, exclusive=False
+            )
+        return await _run(None)
 
     @mcp.tool()
     async def song_load_wav_to_arrangement(

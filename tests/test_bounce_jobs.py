@@ -8,6 +8,7 @@ running state, then release or cancel deterministically.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -323,3 +324,77 @@ async def test_bounce_job_list_tool(
     listed = await _invoke(mcp, "bounce_job_list")
     assert listed["count"] == 1
     assert listed["jobs"][0]["job_id"] == started["job_id"]
+
+
+# ---------------------------------------------------------------------------
+# Non-exclusive jobs — pure file-math work must not queue behind a bounce
+# ---------------------------------------------------------------------------
+
+
+async def test_non_exclusive_job_runs_alongside_bounce() -> None:
+    gate = asyncio.Event()
+
+    async def blocking(progress_cb):
+        await gate.wait()
+        return {"status": "ok"}
+
+    async def quick(progress_cb):
+        return {"status": "ok", "variations": []}
+
+    bounce = jobs.start_job("bounce_song", blocking)             # exclusive
+    mixdown = jobs.start_job("song_make_variations", quick,      # non-exclusive
+                             exclusive=False)
+    snap = await _wait_for_state(mixdown.job_id, "done")
+    assert snap["exclusive"] is False
+    assert jobs.get_job(bounce.job_id).state == "running"
+    gate.set()
+    await _wait_for_state(bounce.job_id, "done")
+
+
+async def test_non_exclusive_jobs_run_concurrently() -> None:
+    async def quick(progress_cb):
+        return {"status": "ok"}
+
+    a = jobs.start_job("song_make_variations", quick, exclusive=False)
+    b = jobs.start_job("song_make_variations", quick, exclusive=False)
+    await _wait_for_state(a.job_id, "done")
+    await _wait_for_state(b.job_id, "done")
+
+
+async def test_exclusive_job_still_blocked_by_exclusive() -> None:
+    gate = asyncio.Event()
+
+    async def blocking(progress_cb):
+        await gate.wait()
+        return {"status": "ok"}
+
+    first = jobs.start_job("bounce_song", blocking)
+    with pytest.raises(jobs.BounceJobError, match=first.job_id):
+        jobs.start_job("bounce_region", blocking)
+    gate.set()
+    await _wait_for_state(first.job_id, "done")
+
+
+async def test_variations_background_returns_job_id(
+    mcp: FastMCP, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """song_make_variations(background=True) returns immediately with a job."""
+    from mcp.server.fastmcp import FastMCP as _F  # noqa: F401
+    from ableton_mcp.tools import song_flow as song_flow_tools
+
+    m = _F("t")
+    song_flow_tools.register(m)
+
+    def fake_make_variations(stems, output_dir, **kw):
+        return {"status": "ok", "n_variations": 12, "variations": []}
+
+    monkeypatch.setattr(song_flow_tools, "make_variations", fake_make_variations)
+    out = await _invoke(
+        m, "song_make_variations",
+        stems=[{"name": "drums", "path": "d.wav"}],
+        output_dir=str(tmp_path), output_set="practice_pack", background=True,
+    )
+    assert out["status"] == "started"
+    snap = await _wait_for_state(out["job_id"], "done")
+    assert snap["exclusive"] is False
+    assert snap["result"]["n_variations"] == 12

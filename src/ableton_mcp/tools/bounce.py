@@ -43,12 +43,19 @@ from ..bounce.mp3 import FFmpegMissing
 _ProgressCB = Callable[[float, str], Awaitable[None]]
 
 
-def _start_background(operation: str, runner: "_jobs.JobRunner") -> dict[str, Any]:
-    """Launch a bounce as a background job; shared by all realtime tools."""
+def _start_background(
+    operation: str, runner: "_jobs.JobRunner", *, exclusive: bool = True
+) -> dict[str, Any]:
+    """Launch a long operation as a background job.
+
+    Shared by the realtime bounce tools (exclusive — they drive Live's
+    transport) and by pure file-math tools like song_make_variations
+    (``exclusive=False``, so they never queue behind a bounce).
+    """
     try:
-        job = _jobs.start_job(operation, runner)
+        job = _jobs.start_job(operation, runner, exclusive=exclusive)
     except _jobs.BounceJobError as e:
-        active = _jobs.active_job()
+        active = _jobs.active_exclusive_job()
         return {
             "status": "busy",
             "error": str(e),

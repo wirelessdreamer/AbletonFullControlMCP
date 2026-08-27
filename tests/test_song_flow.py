@@ -189,9 +189,10 @@ def test_make_variations_practice_pack_count_for_6_stem(tmp_path: Path) -> None:
                              output_set="practice_pack", encode_mp3=False)
     assert result["status"] == "ok"
     assert result["output_set"] == "practice_pack"
-    assert result["n_variations"] == 11
+    assert result["n_variations"] == 12
     labels = sorted(v["label"] for v in result["variations"])
     expected = sorted([
+        "original",
         "no_vocals",
         "drums_boost_no_vocals", "drums_boost_with_vocals",
         "bass_boost_no_vocals", "bass_boost_with_vocals",
@@ -264,8 +265,8 @@ def test_make_variations_practice_pack_skips_vocal_stems_with_substring_match(
     result = make_variations(stems, tmp_path / "pp_subst",
                              output_set="practice_pack", encode_mp3=False)
     assert result["status"] == "ok"
-    # 1 no_vocals + 3 non-vocal stems × 2 = 7
-    assert result["n_variations"] == 7
+    # 1 original + 1 no_vocals + 3 non-vocal stems × 2 = 8
+    assert result["n_variations"] == 8
     labels = {v["label"] for v in result["variations"]}
     # No boost track should start with the name of a vocal stem. (Can't match
     # on substring "vocal" alone — the variant suffix "_no_vocals" /

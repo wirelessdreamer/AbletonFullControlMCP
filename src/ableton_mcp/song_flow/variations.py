@@ -17,6 +17,8 @@ For a 6-stem htdemucs_6s split (``drums / bass / other / vocals / guitar
 per non-vocal instrument so a player can rehearse with or without the
 singer's part audible:
 
+- ``original.wav`` — every stem at unity: the unaltered reference mix
+  (for a transposed pack, the song in the new key).
 - ``no_vocals.wav`` — sum of every non-vocal stem at unity (the
   instrumental backing track).
 - ``<stem>_boost_no_vocals.wav`` — focal stem +``boost_db``, other
@@ -25,8 +27,8 @@ singer's part audible:
   with **vocals at unity** so the song still feels like the original
   recording while the player's instrument is forward.
 
-For a 6-stem split with one vocals stem (5 instrument stems × 2 + 1) that's
-**11 variations**. Vocals stems do not get their own boost track in
+For a 6-stem split with one vocals stem (5 instrument stems × 2 + original
++ no_vocals) that's **12 variations**. Vocals stems do not get their own boost track in
 practice-pack mode.
 
 mp3 encoding is opt-in and best-effort — if ffmpeg isn't on PATH the
@@ -195,12 +197,17 @@ def make_variations(
                 "will be identical to 'no vocals' variants"
             )
 
-        # 1. No Vocals — sum of every non-vocal stem at unity. The full
+        # 1. Original — every stem at unity: the unaltered reference the
+        #    player checks their part against (and, for a transposed pack,
+        #    the song in the NEW key, which no other file provides).
+        _record("original", "original", gains=None)
+
+        # 2. No Vocals — sum of every non-vocal stem at unity. The full
         #    instrumental backing track.
         _record("no_vocals", "no_vocals",
                 gains=None, stem_subset=non_vocal_idxs)
 
-        # 2. Per-instrument boost variants. For each non-vocal stem, produce:
+        # 3. Per-instrument boost variants. For each non-vocal stem, produce:
         #    - <stem>_boost_no_vocals: focal +boost, other non-vocals -duck,
         #      vocals dropped entirely.
         #    - <stem>_boost_with_vocals: same but with vocals at unity (0 dB).
