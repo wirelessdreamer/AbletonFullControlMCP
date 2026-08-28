@@ -62,7 +62,15 @@ def encode_wav_to_mp3(
     if dst.exists() and not overwrite:
         raise FileExistsError(f"{dst} exists; pass overwrite=True to replace")
 
-    cmd = [exe, "-y" if overwrite else "-n", "-i", str(src), "-codec:a", "libmp3lame"]
+    # -nostdin is load-bearing, not cosmetic: ffmpeg reads stdin for its
+    # interactive controls, and a spawned child inherits THIS process's
+    # stdin — which for an MCP server is the protocol pipe. Without it,
+    # ffmpeg blocks waiting on that pipe (observed: an mp3 encode that
+    # takes 10 s went to 11 MINUTES, ffmpeg burning no CPU while the disk
+    # sat idle) and can steal bytes from the JSON-RPC stream. Belt and
+    # braces: stdin=DEVNULL on the call below.
+    cmd = [exe, "-nostdin", "-y" if overwrite else "-n", "-i", str(src),
+           "-codec:a", "libmp3lame"]
     if quality is not None:
         cmd.extend(["-q:a", str(int(quality))])
     else:
@@ -74,6 +82,7 @@ def encode_wav_to_mp3(
         capture_output=True,
         text=True,
         check=False,
+        stdin=subprocess.DEVNULL,
     )
     if proc.returncode != 0:
         tail = "\n".join(proc.stderr.strip().splitlines()[-20:])

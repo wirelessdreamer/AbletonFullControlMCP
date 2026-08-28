@@ -154,10 +154,20 @@ def start_job(
                 job.progress = 1.0
                 job.message = "complete"
         except asyncio.CancelledError:
-            # The engine's cancellation contract already restored Live's
-            # state (transport stopped, temp tracks deleted) on the way up.
             job.state = "cancelled"
-            job.message = "cancelled; Live state restored"
+            if exclusive:
+                # The engine's cancellation contract already restored Live's
+                # state (transport stopped, temp tracks deleted) on the way up.
+                job.message = "cancelled; Live state restored"
+            else:
+                # Non-exclusive jobs do their work in a worker thread, and
+                # a thread cannot be interrupted: cancelling stops us
+                # WAITING on it, not the work itself. Say so rather than
+                # implying everything stopped.
+                job.message = (
+                    "cancelled (the worker thread may still be finishing "
+                    "the file it was on; output already written stays)"
+                )
         except Exception as exc:  # noqa: BLE001 — job boundary
             job.state = "error"
             job.error = f"{type(exc).__name__}: {exc}"
