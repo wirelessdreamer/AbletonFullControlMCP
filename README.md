@@ -6,6 +6,42 @@ A Model Context Protocol (MCP) server that lets an LLM client (Claude Desktop, C
 
 > Status: **200+ tools across 25+ categories.** Phases 1, 3, 4, and 6 (generators + stems) are real. Sound-understanding stack — schemas for 57 stock devices, 109-descriptor semantic vocabulary, NL shaping engine, 6-synth in-process test bench, 44-preset library — ships end-to-end. Inventory tooling bulk-scans every installed instrument. The bounce pipeline produces wav + mp3 (full mix and per-track stems) using Live's built-in Resampling input — no Max for Live or loopback driver required.
 
+## See it in Live
+
+> “Import my local stems and companion MIDI, keep the audio at its original speed, and let me audition the song.”
+
+![Ableton playing six imported audio stems with a muted companion MIDI track and its piano roll visible](docs/images/prepared-stems-midi.jpg)
+
+Six audio stems and 36 MIDI notes, imported through MCP into a Live 11 Arrangement. Playback is running; the companion MIDI starts muted so it does not double the recorded piano. This example uses original, locally generated demo material.
+
+The two project-import examples are a **development preview** and require a checkout with `song_prepare_project` registered.
+
+| Start with | Ask your MCP client | What you get |
+| --- | --- | --- |
+| A local Suno stem export, ZIP, or folder | “Build a project from these stems and MIDI.” | Collected media, separate tracks, optional MIDI previews, and a validation report. |
+| A single recording | “Separate this recording into six stems and prepare it in Live.” | Demucs drums, bass, other, vocals, guitar, and piano, plus a muted reference mix. |
+| An instrument already in Live | “Audition the MIDI piano and make its sound warmer.” | Device-aware parameter changes you can inspect and hear during playback. |
+| A set you want to explore | “Loop these twelve bars, solo the bass, and lower it a little.” | Transport and mixer changes in the active set. |
+
+<details>
+<summary>More screenshots: a separated recording and an instrument tweak</summary>
+
+**One recording → six stem tracks**
+
+![Ableton playing the six real Demucs stem outputs alongside a muted original recording](docs/images/recording-six-stems.jpg)
+
+The same 24-second demo mix passed through the actual `htdemucs_6s` model. The original recording stays available as a muted reference.
+
+**“Make the piano warmer”**
+
+![Operator visible during playback after MCP adjusted the piano's Tone and filter frequency](docs/images/sound-design-operator.jpg)
+
+MCP auditioned the MIDI instrument and adjusted Operator's Tone and filter frequency. The tool also reported a rule whose parameter name did not match this Live device; see the [demo walkthrough](docs/DEMOS.md) for the observed result.
+
+</details>
+
+[Reproduce these demos and see the tool calls](docs/DEMOS.md) · [Installation](#one-time-install) · [Tool reference](docs/TOOLS.md)
+
 ## Comparison vs the projects we built on
 
 This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server][b]. It also sits **on top of** — not against — the lower-level [AbletonOSC][c] Remote Script and its [pylive][d] Python wrapper.
