@@ -18,10 +18,18 @@ The two project-import examples are a **development preview** and require a chec
 
 | Start with | Ask your MCP client | What you get |
 | --- | --- | --- |
-| A local Suno stem export, ZIP, or folder | “Build a project from these stems and MIDI.” | Collected media, separate tracks, optional MIDI previews, and a validation report. |
+| Suno stems plus companion MIDI | “Split the MIDI into parts, pair it with my stems, and check sync in Ableton.” | Separate audio/MIDI tracks, tempo-aware placement, sync diagnostics, and muted MIDI previews. |
 | A single recording | “Separate this recording into six stems and prepare it in Live.” | Demucs drums, bass, other, vocals, guitar, and piano, plus a muted reference mix. |
 | An instrument already in Live | “Audition the MIDI piano and make its sound warmer.” | Device-aware parameter changes you can inspect and hear during playback. |
 | A set you want to explore | “Loop these twelve bars, solo the bass, and lower it a little.” | Transport and mixer changes in the active set. |
+
+### Suno stems + MIDI split and sync
+
+Turn a local Suno stem export and its companion MIDI into an organized Ableton project, with MIDI parts split by source track/channel and placed beside the matching audio. The importer handles MIDI tempo changes, preserves audio starts and tails, and checks timing against the stems—reducing the work of creating tracks, matching parts and lining them up by hand.
+
+> “Here are my Suno stems and MIDI. Import every part, keep the audio at its original speed, check the sync, and leave the MIDI muted for editing.”
+
+Suno handles stem separation and MIDI transcription before import. The MCP workflow pairs the exported files, supports known timing corrections, and flags uncertain offsets or drift for review. **Development preview:** [follow the Suno → Ableton walkthrough](docs/DEMOS.md#suno-stems-and-midi-split-and-sync).
 
 <details>
 <summary>More screenshots: a separated recording and an instrument tweak</summary>
@@ -71,6 +79,7 @@ This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server
 | Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers / TF-IDF fallback) | no | no |
 | AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no |
 | Stem splitting (Demucs) | **yes** (default 6-stem `htdemucs_6s`, fallback 4-stem `htdemucs`; auto GPU when CUDA torch installed) | no | no |
+| Suno stems + MIDI split and sync | **development preview** (paired audio/MIDI parts, tempo-aware placement, sync checks and known offsets) | — | — |
 | Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no |
 | Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a |
 | Auto-installer for clients (Claude Desktop + Code) | **yes** (`install_clients` script) | no | no |
