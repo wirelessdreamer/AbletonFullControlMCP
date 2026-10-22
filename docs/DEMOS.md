@@ -6,7 +6,67 @@ The two project-import demos are a **development preview**. They require a check
 
 The source material is an original 24-second, twelve-bar sketch at 120 BPM in 4/4. It is generated locally by [make_demo_sources.py](../examples/make_demo_sources.py): six synthetic audio parts, a stereo mix, and a 36-note companion MIDI file. The part labeled Vocals is a synthesized melody, not a human recording. No account or external media is needed to generate these sources. Demucs may fetch its model weights on first use.
 
-## Prepared stems and companion MIDI
+## Suno stems and MIDI split and sync
+
+> “Here are my Suno stem ZIP and MIDI exports. Split the MIDI into editable parts, pair each part with its audio, check the sync through the song, and prepare an Ableton project I can audition.”
+
+This development-preview feature automates the handoff from a Suno export to Live: track creation, MIDI part splitting, audio/MIDI pairing, tempo conversion, collected media and sync checks. Suno performs stem separation and MIDI transcription; the importer works with the resulting local files and does not generate missing MIDI.
+
+### 1. Export matching stems and MIDI from Suno
+
+In Suno Studio, extract the stems, select the desired stem and choose **Get MIDI**. Repeat for the parts you want to edit. Use **Export → Multitrack** for the audio tracks. Get MIDI uses credits; see [Suno's export instructions](https://help.suno.com/en/articles/13925249). Suno currently lists Studio MIDI downloads for Premier subscribers, with availability depending on the song and account: [supported download formats](https://help.suno.com/en/articles/13926081).
+
+Keep audio and MIDI from the same song version and export range, and retain file beginnings, silence and tails. Keep a selected-range or individual-clip export's original timeline position with the files; those files may not begin at the same origin as a full-song export. Put companion MIDI in the stem folder or supply its separate folder alongside the ZIP.
+
+For an intentionally fixed-tempo export, Suno documents selecting **Manual BPM** before exporting the stems and using that same BPM in the destination DAW. Export matching MIDI from that project state too. See [Suno's tempo-drift guidance](https://help.suno.com/en/articles/8363457). If preserving a variable-tempo performance, let the importer inspect the MIDI tempo map and review any grid uncertainty.
+
+### 2. Point the assistant at both local exports
+
+```json
+{
+  "tool": "suno_prepare_project",
+  "arguments": {
+    "source_paths": [
+      "D:/Music/Suno/Song Stems.zip",
+      "D:/Music/Suno/Song MIDI"
+    ],
+    "destination": "D:/Music/Song - Ableton Project"
+  }
+}
+```
+
+Use a new destination folder. If the ZIP already contains all companion MIDI files, supply only that ZIP in `source_paths`. The shortcut imports prepared stems without running Demucs again. Poll the returned job ID with `song_import_job_status`. Supply BPM, meter or a source downbeat when known; omitting an unknown value is preferable to guessing. The native-template and Live-verification setup is described in the fixture walkthrough below.
+
+### 3. Split, pair and check the parts in Live
+
+The importer creates an audio track per stem and a separate MIDI part for each supported source track/channel containing notes. It preserves note timing, duration, velocity and supported controller data, and places paired MIDI beside its audio. With no tempo override, matching companion MIDI tempo maps supply the grid; conflicting maps remain reviewable. Audio keeps its native speed with Warp off.
+
+Timing checks compare MIDI onset patterns against the paired audio at multiple points. A clear mismatch is reported; repeating or sparse parts can remain ambiguous. The report can require review even when the files open and play. No automatic quantization, independent stem stretching or speculative offset correction is applied.
+
+When filenames do not establish a pairing, use `song_prepare_project` with explicit `midi_pairings`. The same tool accepts known placements through `offsets_seconds`. For example, **only after confirming that Piano.mid is consistently 160 ms early**, a new import can delay that MIDI by 0.16 seconds:
+
+```json
+{
+  "tool": "song_prepare_project",
+  "arguments": {
+    "source_paths": ["D:/Music/Suno/Matching Export"],
+    "destination": "D:/Music/Song - Corrected Project",
+    "source_mode": "prepared_stems",
+    "midi_pairings": {"Piano.mid": "Piano.wav"},
+    "offsets_seconds": {"Piano.mid": 0.16}
+  }
+}
+```
+
+That value is an illustration, not a standard Suno correction. Offsets are nonnegative delays from the source origin. A constant offset does not solve changing drift; review tempo-map or export mismatches instead of nudging every stem independently.
+
+### 4. Audition audio, then the MIDI alternative
+
+First playback uses the audio stems. MIDI starts muted with an available preview instrument, so the same musical part is not doubled. To audition a MIDI part, mute its recorded audio counterpart and unmute the MIDI track. A preview instrument plays the exported notes; it does not recreate the original Suno sound or guarantee transcription accuracy.
+
+The project includes `import_manifest.json` and `validation_report.json`. Read `needs_review` items before treating sync as finished; `song_verify_imported_project` can recheck Live playback, note readback and portable reopening. Once timing is confirmed, the paired MIDI is ready to edit or assign to your preferred instruments.
+
+## Prepared stems and companion MIDI: reproducible fixture
 
 > “Prepare this folder of stems and MIDI as a Live project at 120 BPM in 4/4. The source downbeat is at zero. Keep the MIDI muted until I audition it.”
 
