@@ -16,17 +16,23 @@ def _midi_to_clip_notes(pm: pretty_midi.PrettyMIDI, instrument_index: int = 0) -
     if instrument_index >= len(pm.instruments):
         return []
     inst = pm.instruments[instrument_index]
-    # Convert seconds to beats using the file's tempo map.
-    tempos_change_times, tempos = pm.get_tempo_changes()
-    bpm = float(tempos[0]) if len(tempos) else 120.0
-    beats_per_sec = bpm / 60.0
+    # Integrate every tempo segment. A note crossing a tempo change must have
+    # its two endpoints converted separately.
+    from ..project_import.timing import TempoMap
+    times, tempos = pm.get_tempo_changes()
+    points = [(0.0, float(tempos[0]) if len(tempos) else 120.0)]
+    beat = 0.0
+    for i in range(1, len(times)):
+        beat += float(times[i] - times[i - 1]) * float(tempos[i - 1]) / 60
+        points.append((beat, float(tempos[i])))
+    tempo_map = TempoMap(points)
     out: list[dict[str, Any]] = []
     for n in inst.notes:
         out.append(
             {
                 "pitch": int(n.pitch),
-                "start": float(n.start * beats_per_sec),
-                "duration": float((n.end - n.start) * beats_per_sec),
+                "start": tempo_map.seconds_to_beat(n.start),
+                "duration": tempo_map.seconds_to_beat(n.end) - tempo_map.seconds_to_beat(n.start),
                 "velocity": int(n.velocity),
                 "mute": False,
             }

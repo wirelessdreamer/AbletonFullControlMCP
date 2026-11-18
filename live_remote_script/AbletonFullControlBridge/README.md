@@ -6,7 +6,7 @@ A Live Remote Script that fills the gaps left by [AbletonOSC](https://github.com
 - Loading browser items onto specific tracks (`load_item`).
 - **Track ops** that AbletonOSC doesn't wrap: `group`, `ungroup`, `freeze`, `flatten`.
 - **Clip ops**: `consolidate`, `crop`, and best-effort `reverse`.
-- **Project**: `save` (and `info`).
+- **Project**: capability reporting, guarded open, import readback/checkpoint and playback probes. Native `save` reports unsupported on Live 11.
 
 It runs alongside AbletonOSC — they don't share ports.
 
@@ -71,6 +71,7 @@ One TCP connection per request. Each side sends a single line of JSON terminated
 | `clip.duplicate_to_arrangement` | `track_index`, `slot_index`, `time` | Place a Session clip on the Arrangement timeline at `time` (beats). Internally calls `Track.duplicate_clip_to_arrangement(clip, time)` (see verified-signatures section below). |
 | `project.save` | — | Equivalent to Cmd-S; Save-As needs the UI dialog |
 | `project.info` | — | Lightweight project snapshot |
+| `project.reload_bridge` | — | Reload the installed server class, retain its socket, and update the active surface and factory alias |
 | `system.reload` | — | `importlib.reload` every handler module + rebuild dispatch table. Lets us hot-swap handler edits without restarting Live or toggling the Control Surface. Does NOT reload `bridge_server.py` itself — restart Live for that. |
 | `system.ping` / `system.version` | — | Liveness + Live version. |
 

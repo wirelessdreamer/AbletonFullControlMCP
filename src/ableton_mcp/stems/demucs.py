@@ -22,7 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import hashlib
+import json
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +51,11 @@ def _demucs_available() -> bool:
     return importlib.util.find_spec("demucs") is not None
 
 
+def _file_hash(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def _separate_sync(
     audio_path: str,
     model_name: str,
@@ -63,8 +72,37 @@ def _separate_sync(
     from demucs.pretrained import get_model
 
     src = Path(audio_path)
-    track_dir = out_dir / model_name / src.stem
-    track_dir.mkdir(parents=True, exist_ok=True)
+    content_hash = _file_hash(src)
+    from importlib.metadata import version
+    settings = {"model": model_name, "demucs_version": version("demucs"),
+                "torch_version": torch.__version__, "format": "FLOAT", "seed": 0,
+                "shifts": 1, "overlap": 0.25}
+    settings_hash = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:16]
+    parent = out_dir / model_name
+    parent.mkdir(parents=True, exist_ok=True)
+    track_dir = parent / f"{content_hash}_{settings_hash}"
+    marker = track_dir / "separation.json"
+    if marker.is_file():
+        try:
+            cached = json.loads(marker.read_text(encoding="utf-8"))
+            expected_sources = ({"drums", "bass", "other", "vocals", "guitar", "piano"}
+                                if model_name == "htdemucs_6s" else {"drums", "bass", "other", "vocals"})
+            names = cached["sources"]
+            if (len(names) != len(expected_sources) or set(names) != expected_sources
+                    or cached["source_sha256"] != content_hash
+                    or any(cached.get(key) != value for key, value in settings.items())):
+                raise ValueError("Cache provenance/source categories differ")
+            paths = [StemFile(name=name, path=str(track_dir / f"{name}.wav")) for name in names]
+            if all(Path(s.path).is_file() and sf.info(s.path).frames == cached["frames"]
+                   and sf.info(s.path).channels == 2 and sf.info(s.path).subtype == "FLOAT"
+                   and sf.info(s.path).samplerate == cached["sample_rate"]
+                   and _file_hash(Path(s.path)) == cached.get("output_hashes", {}).get(s.name)
+                   for s in paths):
+                return paths
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError):
+            # Partial/corrupt metadata is an invalid cache, not a fatal source error.
+            # Preserve it and compute a fresh result in a new directory below.
+            pass
 
     # Auto-detect device. CPU is the fallback for any environment without
     # CUDA torch installed; no opt-in flag required.
@@ -72,27 +110,67 @@ def _separate_sync(
 
     model = get_model(model_name)
     model.eval()
+    expected = {"drums", "bass", "other", "vocals", "guitar", "piano"}
+    if model_name == "htdemucs_6s" and set(model.sources) != expected:
+        raise StemsError("Six-stem model did not expose the six expected source names")
+    if len(model.sources) != len(set(model.sources)):
+        raise StemsError("Model contains duplicate source names")
 
     # Load audio at the model's native sample rate, force stereo (demucs
     # expects 2 channels).
     audio, _ = librosa.load(str(src), sr=model.samplerate, mono=False)
+    if _file_hash(src) != content_hash:
+        raise StemsError("Source recording changed while it was being decoded")
     if audio.ndim == 1:
         audio = np.stack([audio, audio])  # mono → stereo
     elif audio.shape[0] > 2:
-        audio = audio[:2]  # downmix to stereo if multichannel
+        raise StemsError("Only mono/stereo recordings are supported; channels were not discarded")
+    if audio.shape[-1] == 0 or not np.isfinite(audio).all():
+        raise StemsError("Input audio is empty or contains non-finite samples")
     audio_tensor = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
-
-    with torch.no_grad():
-        separated = apply_model(model, audio_tensor, device=device, progress=False)
+    reference = audio_tensor.mean(dim=1)
+    mean, scale = reference.mean(), reference.std()
+    if not torch.isfinite(scale) or float(scale) < 1e-8:
+        scale = torch.tensor(1.0)
+    normalized = (audio_tensor - mean) / scale
+    torch.manual_seed(0)
+    try:
+        with torch.no_grad():
+            separated = apply_model(model, normalized, device=device, progress=False,
+                                    shifts=1, overlap=0.25) * scale + mean
+    except torch.cuda.OutOfMemoryError:
+        # Retry the same six-source model, never silently change the source count.
+        device = "cpu"
+        model.cpu()
+        torch.cuda.empty_cache()
+        torch.manual_seed(0)
+        with torch.no_grad():
+            separated = apply_model(model, normalized, device=device, progress=False,
+                                    shifts=1, overlap=0.25) * scale + mean
     separated = separated[0]  # drop batch dim → (sources, channels, samples)
-
-    stems: list[StemFile] = []
-    for i, name in enumerate(model.sources):
-        stem_audio = separated[i].numpy()  # (channels, samples)
-        out_path = track_dir / f"{name}.wav"
-        sf.write(str(out_path), stem_audio.T, model.samplerate, subtype="PCM_16")
-        stems.append(StemFile(name=name, path=str(out_path)))
-    return stems
+    if tuple(separated.shape) != (len(model.sources), 2, audio.shape[-1]):
+        raise StemsError("Model output shape/duration does not match the decoded input")
+    if not torch.isfinite(separated).all():
+        raise StemsError("Model returned non-finite samples")
+    staging = Path(tempfile.mkdtemp(prefix=".separation-", dir=parent))
+    try:
+        for i, name in enumerate(model.sources):
+            out_path = staging / f"{name}.wav"
+            sf.write(str(out_path), separated[i].detach().cpu().numpy().T,
+                     model.samplerate, subtype="FLOAT")
+        metadata = {**settings, "source_sha256": content_hash, "sources": list(model.sources),
+                    "sample_rate": model.samplerate, "frames": audio.shape[-1], "device": device,
+                    "output_hashes": {name: _file_hash(staging / f"{name}.wav")
+                                      for name in model.sources}}
+        (staging / "separation.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        if track_dir.exists():
+            # An invalid previous result is retained for diagnostics, not overwritten.
+            track_dir = parent / f"{content_hash}_{settings_hash}_{staging.name[12:]}"
+        staging.rename(track_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    return [StemFile(name=name, path=str(track_dir / f"{name}.wav")) for name in model.sources]
 
 
 async def split_stems(
@@ -118,7 +196,9 @@ async def split_stems(
         # CUDA 12.8 nightly — required for sm_120 / Blackwell (RTX 50-series)
         pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 
-    Demucs writes stems to ``<out_dir>/<model>/<basename>/<stem>.wav``.
+    Demucs writes float WAVs to content-addressed directories beneath ``out_dir/model``.
+    The project-import workflow runs this function in a killable worker process;
+    cancelling this low-level coroutine alone cannot stop its executor thread.
 
     The ``python_executable`` argument is accepted for backwards
     compatibility but ignored — the new implementation invokes Demucs
