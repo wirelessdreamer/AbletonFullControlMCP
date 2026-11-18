@@ -30,6 +30,7 @@ from .tools import (
     pco,
     presets,
     project,
+    project_import,
     render,
     routing,
     scenes,
@@ -111,6 +112,7 @@ def build_server() -> FastMCP:
     song_flow.register(mcp)
     # One-call session snapshot for question-answering ("what's on track 3?").
     project.register(mcp)
+    project_import.register(mcp)
     # Mix-aware shaping — multi-track masking analysis, propose/apply/verify
     # loop driven by intent words ("cuts_through", "muddy", "harsh", ...).
     mix.register(mcp)

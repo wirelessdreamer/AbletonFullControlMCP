@@ -203,3 +203,34 @@ async def test_op_new_set_returns_actionable_stub(
     # Message should mention the UI + alternatives.
     msg = result.get("reason", "")
     assert "File" in msg or "track_delete" in msg or "UI" in msg
+
+
+@pytest.mark.asyncio
+async def test_save_as_path_is_rejected_without_a_bridge_call(monkeypatch):
+    bridge = _FakeBridge()
+    monkeypatch.setattr(high_level_tool, "get_bridge_client", lambda: bridge)
+    mcp = FastMCP("t")
+    high_level_tool.register(mcp)
+    result = await _invoke(mcp, "op_save_set", path="C:/Music/elsewhere.als")
+    assert result["saved"] is False and result["save_as_supported"] is False
+    assert bridge.calls == []
+
+
+@pytest.mark.asyncio
+async def test_open_does_not_launch_around_native_guard_error(tmp_path, monkeypatch):
+    from ableton_mcp.bridge_client import AbletonBridgeError
+    import os
+    class Bridge:
+        async def call(self, *args, **kwargs):
+            raise AbletonBridgeError("The active set has undoable edits")
+    monkeypatch.setattr(high_level_tool, "get_bridge_client", Bridge)
+    def forbidden(*args):
+        raise AssertionError("must not bypass the native edit guard")
+    monkeypatch.setattr(os, "startfile", forbidden, raising=False)
+    path = tmp_path / "Song.als"
+    path.write_bytes(b"test")
+    mcp = FastMCP("t")
+    high_level_tool.register(mcp)
+    result = await _invoke(mcp, "op_open_set", path=str(path), launch_if_unavailable=True)
+    assert result["ok"] is False
+    assert "undoable edits" in result["error"]

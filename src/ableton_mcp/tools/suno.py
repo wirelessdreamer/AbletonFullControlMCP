@@ -144,7 +144,8 @@ def register(mcp: FastMCP) -> None:
         CUDA torch build — see the docstring on
         ``ableton_mcp.stems.demucs.split_stems`` for the install commands.
 
-        Output is written under ``data/stems/<model>/<basename>/<stem>.wav``.
+        Float WAV output is written to content-addressed folders under
+        ``data/stems/<model>/``; identical inputs/settings reuse validated stems.
         If demucs isn't installed in this venv, returns a structured error
         with the pip install hint.
         """

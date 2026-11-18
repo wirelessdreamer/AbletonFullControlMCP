@@ -113,16 +113,81 @@ def register(mcp: FastMCP) -> None:
         return await _call("clip.reverse", track_index=int(track_index), clip_index=int(clip_index))
 
     @mcp.tool()
-    async def op_save_set(path: str | None = None) -> dict[str, Any]:
-        """Save the current Live Set (Cmd-S).
+    async def op_project_capabilities() -> dict[str, Any]:
+        """Report actual native save/path support and MCP import operations."""
+        return await _call("project.capabilities")
 
-        `path` is accepted for forward compatibility but Live's API does NOT
-        support Save-As without the UI dialog, so it's currently ignored with
-        a `save_as_supported: False` flag in the response.
+    @mcp.tool()
+    async def op_reload_bridge() -> dict[str, Any]:
+        """Apply installed bridge lifecycle fixes without restarting Live.
+
+        Retains the listening socket and updates the active bridge class and
+        factory alias. Handler-only system.reload cannot apply lifecycle fixes.
         """
-        result = await _call("project.save")
+        return await _call("project.reload_bridge")
+
+    @mcp.tool()
+    async def op_cancel_import_open(expected_set_path: str) -> dict[str, Any]:
+        """Cancel a pending Save Changes prompt on this identified imported set.
+
+        Uses Live's native API and preserves the active document. No screen,
+        mouse or keyboard input; refuses other dialogs and other set identities.
+        """
+        return await _call("project.import_cancel_open", expected_set_path=expected_set_path)
+
+    @mcp.tool()
+    async def op_open_set(path: str, launch_if_unavailable: bool = False,
+                          preserved_set_path: str | None = None) -> dict[str, Any]:
+        """Request opening an existing .als without screen control.
+
+        The bridge refuses to replace a playing, recording or edited set and
+        reports dialogs as pending. Loading is asynchronous; inspect the set
+        through project tools or song_verify_imported_project afterward.
+        launch_if_unavailable permits a normal OS file-open request if the
+        bridge is offline; Live retains its normal save/error prompts. This
+        reports only a request, never a confirmed load, and uses no UI input.
+        After the user saves their active set, preserved_set_path identifies it
+        and permits retained undo history; any Save Changes prompt stays pending.
+        """
+        if launch_if_unavailable:
+            from pathlib import Path
+            import os
+            import subprocess
+            import sys
+            target = Path(path).expanduser().resolve()
+            if target.suffix.lower() != ".als" or not target.is_file():
+                return {"ok": False, "error": "Provide an existing .als file"}
+            bridge = get_bridge_client()
+            try:
+                kwargs = {"preserved_set_path": preserved_set_path} if preserved_set_path else {}
+                return await bridge.call("project.open_set", path=str(target), **kwargs)
+            except AbletonBridgeUnavailable:
+                if os.name == "nt":
+                    os.startfile(str(target))
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    return {"ok": False, "error": "Opening Live sets is supported on Windows/macOS"}
+                return {"requested": True, "confirmed_loaded": False, "path": str(target),
+                        "method": "os_file_association", "screen_control": False,
+                        "pending": "Wait for Live and its bridge; existing save/error dialogs remain untouched"}
+            except AbletonBridgeError as exc:
+                return {"ok": False, "error": str(exc)}
+        kwargs = {"preserved_set_path": preserved_set_path} if preserved_set_path else {}
+        return await _call("project.open_set", path=path, **kwargs)
+
+    @mcp.tool()
+    async def op_save_set(path: str | None = None) -> dict[str, Any]:
+        """Request native save if the running Live API supports it.
+
+        Live 11 returns saved=false/supported=false. Portable import artifacts
+        are written directly and verified through song_verify_imported_project.
+        No keyboard input or Save As dialog is used, and paths are never ignored.
+        """
         if path is not None:
-            result["save_as_path_ignored"] = path
+            return {"saved": False, "supported": False, "save_as_supported": False,
+                    "reason": "Native Save As is unavailable; use song_prepare_project for a new portable project"}
+        result = await _call("project.save")
         return result
 
     # ---- Genuinely-not-supported ops ----

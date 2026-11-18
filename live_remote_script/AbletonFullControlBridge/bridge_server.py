@@ -122,6 +122,10 @@ class BridgeServer(object):
     def connect_script_instances(self, instantiated_scripts):  # pragma: no cover
         pass
 
+    def refresh_state(self):
+        """Required by Live when a set or MIDI port configuration changes."""
+        pass
+
     def request_rebuild_midi_map(self):  # pragma: no cover
         pass
 
@@ -356,7 +360,9 @@ def _system_ping(c_instance, **_):
 #           (returns None for absolute paths; see docs/PRACTICE_PACK_WAV_LOAD_DEBUG.md).
 #   1.6.0 — clip.delete_arrangement_clip: remove one arrangement clip
 #           (session-fired bounce punch cleanup).
-BRIDGE_VERSION = "1.6.0"
+#   1.7.0 — import snapshot/checkpoint/preview and guarded set switching;
+#           core reload and required refresh_state lifecycle callback.
+BRIDGE_VERSION = "1.7.0"
 
 
 def _system_version(c_instance, _handler_table=None, **_):

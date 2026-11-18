@@ -52,6 +52,7 @@ async def test_server_builds_and_registers_tools() -> None:
         "listen_device_parameter", "listen_poll", "listen_stop", "listen_list",
         # High-level stubs
         "op_group_tracks", "op_freeze_track", "op_consolidate_clip",
+        "op_open_set", "op_project_capabilities", "op_reload_bridge", "op_cancel_import_open",
         # Future-phase stubs
         "browser_search", "render_master", "sound_probe_device",
         "ableton_search_docs", "suno_generate",
@@ -63,6 +64,9 @@ async def test_server_builds_and_registers_tools() -> None:
         "bounce_job_status", "bounce_job_cancel", "bounce_job_list",
         # Session-clip transpose (arrangement-safe path)
         "song_transpose_session",
+        "song_prepare_project", "suno_prepare_project", "suno_import_mcp_export",
+        "song_import_job_status", "song_use_import_template",
+        "song_import_job_cancel", "song_import_job_resume", "song_verify_imported_project",
     }
     missing = expected - names
     assert not missing, f"missing tools: {sorted(missing)}"

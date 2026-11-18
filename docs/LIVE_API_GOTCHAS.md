@@ -71,6 +71,10 @@ If you discover a fact that isn't here, add it. Future-you will thank you.
 | `Live.Application.get_application().get_document()` | yes | Returns the `Song`. |
 | `Application.browser` | yes | Has `instruments`, `audio_effects`, `midi_effects`, `drums`, `sounds`, `samples`, `plugins`, `user_library`, `current_project`, `packs`. |
 | `Application.browser.load_item(item)` | yes | Loads onto whichever track is currently selected — so always set `song.view.selected_track = track` first. |
+| `Song.save()` | **NO** | Live 11.3.43 exposes no native save method. Bridge reports unsupported; generated import artifacts are written and checkpointed on disk. |
+| `Song.file_path` / `get_file_path()` | **conditional** | Available for the loaded imported set in Live 11.3.43; absent on the observed unsaved default set. Fall back to all track names and collected media paths, with explicit evidence. |
+| Mixer volume storage | **verified** | XML Volume/Manual is linear amplitude (1.0 = 0 dB), while DeviceParameter.value is a nonlinear fader (~0.85 = 0 dB). Compare str_for_value(value) in dB. |
+| Remote Script `refresh_state()` | **required** | Called during set and port changes. A missing method raises RemoteScriptError and can interrupt document loading. |
 | `Song.tracks` | yes | Property, iterable. |
 | `Song.scenes` | yes | Property, iterable. |
 | `Song.view.selected_track` / `.selected_clip` / `.selected_scene` / `.selected_device` | yes | Setters + getters. |

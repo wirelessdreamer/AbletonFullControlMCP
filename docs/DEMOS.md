@@ -2,7 +2,7 @@
 
 These are actual Ableton Live 11.3.43 window captures. Project preparation, model separation, transport, mixer changes and sound-design actions ran through the MCP server. Computer Use framed the views, captured the screenshots, and opened/saved demonstration copies. The screenshots contain no composited interface elements.
 
-The two project-import demos are a **development preview**. They require a checkout that registers `song_prepare_project`, `song_import_job_status` and `song_verify_imported_project`; this documentation update does not ship that implementation. Instrument and transport tools are documented in the [tool reference](TOOLS.md).
+The project-import examples run from the current source checkout with the included Live 11 bridge. See the [project import guide](PROJECT_IMPORT.md) for verification and the [tool reference](TOOLS.md) for the registered tools.
 
 The source material is an original 24-second, twelve-bar sketch at 120 BPM in 4/4. It is generated locally by [make_demo_sources.py](../examples/make_demo_sources.py): six synthetic audio parts, a stereo mix, and a 36-note companion MIDI file. The part labeled Vocals is a synthesized melody, not a human recording. No account or external media is needed to generate these sources. Demucs may fetch its model weights on first use.
 
@@ -10,7 +10,7 @@ The source material is an original 24-second, twelve-bar sketch at 120 BPM in 4/
 
 > “Here are my Suno stem ZIP and MIDI exports. Split the MIDI into editable parts, pair each part with its audio, check the sync through the song, and prepare an Ableton project I can audition.”
 
-This development-preview feature automates the handoff from a Suno export to Live: track creation, MIDI part splitting, audio/MIDI pairing, tempo conversion, collected media and sync checks. Suno performs stem separation and MIDI transcription; the importer works with the resulting local files and does not generate missing MIDI.
+This workflow automates track creation, MIDI part splitting, audio/MIDI pairing, tempo conversion, media collection and sync checks. Suno performs stem separation and MIDI transcription. If your signed-in Suno MCP returns actual export file links, the assistant can [hand them straight to Ableton](PROJECT_IMPORT.md#handoff-from-official-suno-mcp). If it only returns song links or does not expose the required export for your account, use the Studio export steps below.
 
 ### 1. Export matching stems and MIDI from Suno
 
@@ -30,7 +30,8 @@ For an intentionally fixed-tempo export, Suno documents selecting **Manual BPM**
       "D:/Music/Suno/Song Stems.zip",
       "D:/Music/Suno/Song MIDI"
     ],
-    "destination": "D:/Music/Song - Ableton Project"
+    "destination": "D:/Music/Song - Ableton Project",
+    "require_midi": true
   }
 }
 ```
@@ -98,7 +99,7 @@ The destination must be new. Call this MCP tool with absolute paths appropriate 
 }
 ```
 
-The default response returns a job ID. Poll `song_import_job_status`; background preparation can include Live verification. Before a verification run, stop transport and preserve any work in the active set. The importer needs Live 11 track scaffolding: in the development checkout, `song_use_import_template(template_als_path)` caches the currently loaded set after it has been saved by the running Live build. The demo used that native reference for its schema and compatibility metadata.
+The default response returns a job ID. Poll `song_import_job_status`; background preparation can include Live verification. Before a verification run, stop transport and preserve any work in the active set. The importer needs Live 11 track scaffolding: `song_use_import_template(template_als_path)` caches the currently loaded set after it has been saved by the running Live build. The demo used that native reference for its schema and compatibility metadata.
 
 In this capture, `song_verify_imported_project` confirmed playback, all 36 MIDI notes, the MIDI instrument preview, and reopening both the original and a relocated project. The result remained `needs_review`: repeated chord onsets could not establish a unique audio/MIDI offset. Successful playback does not silently certify uncertain musical timing.
 

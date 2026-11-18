@@ -14,7 +14,7 @@ A Model Context Protocol (MCP) server that lets an LLM client (Claude Desktop, C
 
 Six audio stems and 36 MIDI notes, imported through MCP into a Live 11 Arrangement. Playback is running; the companion MIDI starts muted so it does not double the recorded piano. This example uses original, locally generated demo material.
 
-The two project-import examples are a **development preview** and require a checkout with `song_prepare_project` registered.
+The project-import examples use the current source checkout and the included Live 11 bridge. See the [project import setup](docs/PROJECT_IMPORT.md#verification-and-readiness).
 
 | Start with | Ask your MCP client | What you get |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ Turn a local Suno stem export and its companion MIDI into an organized Ableton p
 
 > “Here are my Suno stems and MIDI. Import every part, keep the audio at its original speed, check the sync, and leave the MIDI muted for editing.”
 
-Suno handles stem separation and MIDI transcription before import. The MCP workflow pairs the exported files, supports known timing corrections, and flags uncertain offsets or drift for review. **Development preview:** [follow the Suno → Ableton walkthrough](docs/DEMOS.md#suno-stems-and-midi-split-and-sync).
+Suno handles stem separation and MIDI transcription before import. In a client connected to both MCP servers, `suno_import_mcp_export` can hand completed download links straight to the importer when Suno provides them. Local ZIP and folder exports work with `suno_prepare_project`. [Follow the Suno → Ableton walkthrough](docs/DEMOS.md#suno-stems-and-midi-split-and-sync).
 
 <details>
 <summary>More screenshots: a separated recording and an instrument tweak</summary>
@@ -78,8 +78,8 @@ This is an MCP server in the same niche as [ableton-mcp][a] and [live-mcp-server
 | Bounce to wav / stems / mp3 | **yes** (Live Resampling track + libmp3lame, full mix + per-track stems in one pass) | no | no |
 | Knowledge RAG over Live manual + Cookbook | **yes** (sentence-transformers / TF-IDF fallback) | no | no |
 | AI generators (Suno / MusicGen / Stable Audio) | **pluggable Generator interface** | no | no |
-| Stem splitting (Demucs) | **yes** (default 6-stem `htdemucs_6s`, fallback 4-stem `htdemucs`; auto GPU when CUDA torch installed) | no | no |
-| Suno stems + MIDI split and sync | **development preview** (paired audio/MIDI parts, tempo-aware placement, sync checks and known offsets) | — | — |
+| Stem splitting (Demucs) | **yes** (default 6-stem `htdemucs_6s`, explicit 4-stem option `htdemucs`; auto GPU when CUDA torch installed) | no | no |
+| Suno stems + MIDI split and sync | **yes** (local exports or direct file links from Suno MCP, paired parts, tempo-aware placement and sync checks) | — | — |
 | Hot-reload of bridge handlers | **yes** (`system.reload`) | n/a | no |
 | Reply correlation under concurrent calls | **per-(address, args-prefix) FIFO** | n/a | n/a |
 | Auto-installer for clients (Claude Desktop + Code) | **yes** (`install_clients` script) | no | no |
@@ -125,6 +125,12 @@ So we built the layers a musician actually needs above all of those:
 11. **A knowledge RAG layer** (`knowledge/`) over the Ableton manual + Cookbook for grounded how-to answers.
 
 Net result: 200+ tools that the LLM picks across as the conversation moves between "what's loaded?", "tweak this knob", "extend this section", and "render the result". You can have the entire conversation in producer's language; we translate to OSC + LOM behind the scenes.
+
+## Prepare a project from stems or a recording
+
+`song_prepare_project` builds a portable Live 11 Arrangement project from a local stem ZIP/folder or a single mono/stereo recording. Prepared stems bypass separation; recordings run Demucs six-stem separation first. `suno_prepare_project` is the prepared-download shortcut. Both import optional MIDI, preserve native timing, configure playback and headroom, and provide durable background jobs with cancellation and retry.
+
+Read [the project import guide](docs/PROJECT_IMPORT.md) for tool and CLI examples, timing overrides and setup. A project is reported ready only after its timing, Live playback/artifact-checkpoint/reopen and template-release compatibility checks pass; unresolved cases return `needs_review` with the saved project and specific pending items. Live 11 has no native set-save API: the importer writes the portable `.als` directly and verifies it through MCP. `op_save_set` reports unsupported on this build; native saving remains untested.
 
 ## Architecture
 
@@ -193,7 +199,7 @@ Both downloads are ~2-3 GB. No code changes needed after install — `stems_spli
 
 ```powershell
 python -m ableton_mcp.scripts.install_abletonosc   # transport, tracks, clips, devices, scenes, ...
-python -m ableton_mcp.scripts.install_bridge       # browser, group/freeze/flatten, save, ...
+python -m ableton_mcp.scripts.install_bridge       # browser, group/freeze/flatten, project import, ...
 ```
 
 This drops two folders under `Documents\Ableton\User Library\Remote Scripts\` (Windows) or `~/Music/Ableton/User Library/Remote Scripts/` (macOS). Live only scans this directory at startup, so **restart Ableton Live now** if it's open.
@@ -208,7 +214,7 @@ This step is required — without it, the MCP server can't talk to Live. After r
 4. In another free row, pick **AbletonFullControlBridge**. Leave Input and Output as **None**.
 5. Close Preferences. Both run side-by-side: AbletonOSC owns UDP 11000/11001, the bridge owns TCP 11002.
 
-If either entry isn't in the Control Surface dropdown, step 2a didn't land — re-run the install script and restart Live. Both must be enabled; the server will time out on roughly 70% of its tools if AbletonOSC is missing, and on browser / group / freeze / save / hot-reload calls if the bridge is missing.
+If either entry isn't in the Control Surface dropdown, step 2a didn't land — re-run the install script and restart Live. Both must be enabled; the server will time out on roughly 70% of its tools if AbletonOSC is missing, and on browser / group / freeze / import / hot-reload calls if the bridge is missing.
 
 > **Why two scripts, different ownership?**
 >
